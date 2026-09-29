@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "vleeuwenmenno.omasoloist",
   "name": "OmaSoloist",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "author": "vleeuwenmenno",
   "license": "MIT with Commons Clause",
   "description": "Spotify for Omarchy in about 100 MB of RAM: a Soloist-powered player in the bar and a themed, Spotify-style app window with library, search, lyrics, queue editing and device control.",

@@ -687,6 +687,40 @@ Ui.BarWidget {
                     onClicked: root.view = "library"
                 }
 
+                // Compact update badge while a newer release tag exists.
+                Rectangle {
+                    id: popupUpdate
+                    visible: root.svc !== null && root.svc.updateAvailable
+                    Layout.alignment: Qt.AlignVCenter
+                    implicitWidth: popupUpdateText.implicitWidth + Style.space(20)
+                    implicitHeight: Style.space(26)
+                    radius: height / 2
+                    color: popupUpdateMouse.containsMouse ? Qt.lighter(Color.accent, 1.1) : Color.accent
+
+                    Text {
+                        id: popupUpdateText
+                        anchors.centerIn: parent
+                        text: "󰚰 " + (root.svc ? root.svc.latestVersion : "")
+                        color: Color.background
+                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                        font.pixelSize: Style.font.caption
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        id: popupUpdateMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            root.close();
+                            root.svc.runUpdate();
+                        }
+                        onEntered: if (root.bar) root.bar.showTooltip(popupUpdate, "Update OmaSoloist " + root.svc.version + " → " + root.svc.latestVersion)
+                        onExited: if (root.bar) root.bar.hideTooltip(popupUpdate)
+                    }
+                }
+
                 // Keeps the icons right-aligned when the library button is hidden.
                 Item {
                     visible: root.svc === null || !root.svc.popupShows("library")

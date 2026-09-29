@@ -601,6 +601,43 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 12
 
+                        // Update pill (like Spotify's "Install App"), when a newer
+                        // release tag exists.
+                        Rectangle {
+                            id: updatePill
+                            visible: root.service.updateAvailable
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: updateText.implicitWidth + 28
+                            height: 32
+                            radius: 16
+                            color: updateMouse.containsMouse ? Qt.lighter(root.accent, 1.1) : root.accent
+
+                            Text {
+                                id: updateText
+                                anchors.centerIn: parent
+                                text: "󰚰  Update to " + root.service.latestVersion
+                                color: root.bg
+                                font.family: Style.font.family
+                                font.pixelSize: Style.font.bodySmall
+                                font.bold: true
+                            }
+
+                            MouseArea {
+                                id: updateMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.showEntries([
+                                    { header: "OmaSoloist " + root.service.latestVersion + " is available" },
+                                    { note: "You have " + root.service.version + "." },
+                                    { label: "Update now", icon: "󰚰", accent: true,
+                                      action: function() { root.service.runUpdate(); } },
+                                    { label: "What's new", icon: "󰋼", external: true,
+                                      action: function() { Qt.openUrlExternally(root.service.releasesUrl); } }
+                                ], updatePill, updatePill.width - 280, updatePill.height + 8)
+                            }
+                        }
+
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
                             text: "󰒓"
