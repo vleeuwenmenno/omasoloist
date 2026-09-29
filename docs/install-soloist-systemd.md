@@ -6,10 +6,9 @@ background with its WebSocket API enabled. This guide sets it up as a systemd
 user service called `soloist.service`, which is what the plugin expects by
 default.
 
-**Shortcut:** [`scripts/install-soloist.sh`](../scripts/install-soloist.sh)
-does every step below for you. Run `scripts/install-soloist.sh --help` for
-options, or `--dry-run` to see what it would do. The manual steps are here so
-you know what it changes.
+OmaSoloist does not install Soloist for you. Soloist is Spotify's software,
+downloaded from Spotify, so you set it up yourself with the steps below and
+stay in control of which build you run.
 
 ## Prerequisites
 
@@ -22,7 +21,7 @@ you know what it changes.
   library and search features.
 - **PipeWire or another sound server** running in your user session (Omarchy
   ships PipeWire).
-- `curl` and `tar`.
+- `curl`, `tar` and `sha256sum`.
 
 ## 1. Download the binary
 
@@ -41,8 +40,36 @@ your `PATH`, which matters: the plugin runs `soloist ctl` from `PATH`):
 ```bash
 arch=x86_64   # or arm64 / arm32
 tmp=$(mktemp -d)
-curl -fL -o "$tmp/soloist.tar.gz" "https://soloist-builds.spotifycdn.com/soloist_release_$arch.tar.gz"
+curl -fL --proto '=https' --tlsv1.2 -o "$tmp/soloist.tar.gz" \
+  "https://soloist-builds.spotifycdn.com/soloist_release_$arch.tar.gz"
 tar -xzf "$tmp/soloist.tar.gz" -C "$tmp"
+```
+
+### Check what you downloaded
+
+Spotify publishes one moving "latest" archive per architecture, with no
+versioned download links and no checksum files, so there is nothing
+official to compare against. Before installing, look at what you got and
+keep a record:
+
+```bash
+"$tmp/soloist" --version          # e.g. soloist 1.3.8.51 build … (20260918) …
+sha256sum "$tmp/soloist.tar.gz" "$tmp/soloist"
+```
+
+The version line includes the build date; a build older than about 90 days
+won't start (see [Updating](#updating)). Save the version and checksums
+somewhere if you want to tell later whether the binary changed:
+
+```bash
+mkdir -p ~/.local/share/soloist
+{ date -u +%FT%TZ; "$tmp/soloist" --version; sha256sum "$tmp/soloist.tar.gz" "$tmp/soloist"; } \
+  >> ~/.local/share/soloist/installed-builds.log
+```
+
+Then install it and clean up:
+
+```bash
 install -Dm755 "$tmp/soloist" ~/.local/bin/soloist
 rm -rf "$tmp"
 soloist --version
@@ -98,6 +125,29 @@ About the flags:
 Other useful options (see `soloist --help`): `--pipewire-device <node>` to
 route audio to one PipeWire sink, `--initial-volume <0-100>` (default 40),
 `--cache-size <MB>`, `--verbose`.
+
+### Where the API key is visible
+
+Soloist only accepts the key as a command-line argument (`-k/--api-key`);
+it has no environment variable or key-file option. So while it runs, the key
+is part of its process arguments:
+
+- **Your own programs** can read it, but they can read the key file too, so
+  that adds nothing.
+- **Other user accounts on the same machine** can see process arguments in
+  `/proc` by default. On a single-user laptop that's nobody. On a shared
+  machine, hide other users' processes by mounting `/proc` with
+  `hidepid=invisible`, for example with this line in `/etc/fstab`
+  (needs root, takes effect after a reboot or remount):
+
+  ```
+  proc  /proc  proc  defaults,hidepid=invisible  0  0
+  ```
+
+The key only lets a Soloist device sign in with your developer account.
+If it leaks, revoke it on the
+[Soloist API Key](https://developer.spotify.com/dashboard/soloist) page and
+put the new one in `~/.config/soloist/api-key`.
 
 ## 4. Create the user unit
 
@@ -166,17 +216,11 @@ other control commands.
 ## Updating
 
 **Soloist builds expire 90 days after their build date.** An expired build
-exits with code 10 and the service stops. Update by downloading the new build
-over the old binary (step 1) and restarting:
+exits with code 10 and the service stops. Update by repeating step 1
+(download, check, install over the old binary) and restarting:
 
 ```bash
 systemctl --user restart soloist.service
-```
-
-Or with the script:
-
-```bash
-scripts/install-soloist.sh --update
 ```
 
 A reminder in your calendar every couple of months saves a surprise.
@@ -184,11 +228,11 @@ A reminder in your calendar every couple of months saves a surprise.
 ## Uninstalling
 
 ```bash
-scripts/install-soloist.sh --uninstall
+systemctl --user disable --now soloist.service
+rm ~/.config/systemd/user/soloist.service ~/.local/libexec/soloist-service ~/.local/bin/soloist
+systemctl --user daemon-reload
 ```
 
-Or by hand: `systemctl --user disable --now soloist.service`, then delete the
-unit, the wrapper and the binary, and run `systemctl --user daemon-reload`.
 The API key (`~/.config/soloist/api-key`) and the session
 (`~/.local/share/soloist`) are left in place; remove them if you want.
 

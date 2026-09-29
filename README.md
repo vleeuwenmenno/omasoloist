@@ -54,18 +54,11 @@ Everything follows your Omarchy theme.
 
 ### 1. Install Soloist
 
-Run the installer script from this repo. It downloads Soloist to
-`~/.local/bin`, asks for your API key, and sets up and starts
-`soloist.service`:
-
-```bash
-git clone https://github.com/vleeuwenmenno/omasoloist.git
-omasoloist/scripts/install-soloist.sh
-```
-
-Run it with `--dry-run` first to see what it will write, or `--help` for all
-options. To do it by hand instead, follow
-[docs/install-soloist-systemd.md](docs/install-soloist-systemd.md).
+Soloist is Spotify's software and this plugin doesn't install it. Follow
+[docs/install-soloist-systemd.md](docs/install-soloist-systemd.md) (about
+10 minutes): download it from Spotify, check the build's version and
+checksum, store your API key, and set it up as the `soloist.service` user
+service with its WebSocket API enabled.
 
 ### 2. Install the plugin
 
@@ -79,9 +72,14 @@ Plugins run unsandboxed inside the shell, so `omarchy plugin add` asks you to
 confirm; without `--enable` the plugin lands disabled so you can read the code
 first. Update later with `omarchy plugin update vleeuwenmenno.omasoloist`.
 
-**Manual install:** clone the repo into
-`~/.config/omarchy/plugins/vleeuwenmenno.omasoloist` (the directory name must
-be the plugin id), then run `omarchy-shell shell rescanPlugins`.
+**Manual install of a specific release:** clone a release tag into the
+plugin directory (its name must be the plugin id), then rescan:
+
+```bash
+git clone --branch v0.3.1 --depth 1 https://github.com/vleeuwenmenno/omasoloist.git \
+  ~/.config/omarchy/plugins/vleeuwenmenno.omasoloist
+omarchy-shell shell rescanPlugins
+```
 
 ### 3. Add the widget to the bar
 
@@ -152,9 +150,8 @@ rm -rf ~/.config/omasoloist ~/.local/state/omasoloist ~/.cache/omasoloist
 - `~/.cache/omasoloist/`: cached API answers, artwork and lyrics
 
 If you added the Hyprland float rule, remove its line from
-`~/.config/hypr/windows.lua`. Soloist itself is separate; if you installed it
-with the script, `scripts/install-soloist.sh --uninstall` removes the service
-and binary (it keeps your API key and Soloist's data directory).
+`~/.config/hypr/windows.lua`. Soloist itself is separate; see
+[Uninstalling](docs/install-soloist-systemd.md#uninstalling) in its guide.
 
 ## Configuration
 
@@ -240,8 +237,11 @@ o.window({ class = "^org.quickshell$", title = "^Soloist$" }, { float = true, si
 - **Search returns 10 results per page**, the maximum for development-mode apps.
 - **Artist pages** have no verified badge or header image: that data isn't
   available.
-- **Soloist builds expire after 90 days.** Update with
-  `scripts/install-soloist.sh --update`.
+- **Soloist builds expire after 90 days.** Download the new build again; see
+  [Updating](docs/install-soloist-systemd.md#updating).
+- **Soloist takes its API key only on the command line**, so the key is part
+  of its process arguments. See
+  [Where the API key is visible](docs/install-soloist-systemd.md#where-the-api-key-is-visible).
 
 ## Privacy
 
@@ -266,15 +266,15 @@ Your Spotify tokens stay on your machine in `~/.local/state/omasoloist/`.
   artist info and the quality estimate; it reads `/proc/<soloist pid>/fd` to
   find the playing cache file and runs `pw-dump`.
 - It edits only its own entry in `~/.config/omarchy/shell.json`, when you
-  change a setting in Settings → Bar widget. No sudo, nothing outside your
-  home directory.
+  change a setting in Settings → Bar widget. It never asks for root and
+  writes nothing outside your home directory.
 
 ## Development
 
 Work in a clone anywhere and copy it into the plugin directory with:
 
 ```bash
-./install.sh
+scripts/dev-sync.sh
 ```
 
 It rsyncs the repo to `~/.config/omarchy/plugins/vleeuwenmenno.omasoloist/`.
