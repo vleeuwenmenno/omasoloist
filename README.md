@@ -1,5 +1,7 @@
 # Soloist for Omarchy
 
+![OmaSoloist: the app window, Now Playing panel and bar popup](preview.png)
+
 Spotify in the [Omarchy](https://omarchy.org) shell, without the Electron app.
 
 This plugin (`vleeuwenmenno.omasoloist`) adds a now-playing widget to the
@@ -7,10 +9,6 @@ Omarchy bar and a themed, Spotify-desktop-style app window. Playback runs on
 [Spotify Soloist](https://developer.spotify.com/documentation/soloist),
 Spotify's official headless Spotify Connect client, as a systemd user service.
 Everything follows your Omarchy theme.
-
-## Screenshots
-
-> TODO: add screenshots of the bar widget, its popup and the app window.
 
 ## Features
 
