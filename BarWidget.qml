@@ -22,7 +22,7 @@ Ui.BarWidget {
     // Label next to the icon: "icon", "title", "title-artist",
     // "artist-title" or "lyrics" (current lyric line); editable in the app
     // window's Settings. `labelLength` caps it in characters.
-    readonly property string labelMode: svc ? svc.labelMode : "title"
+    readonly property string labelMode: svc ? svc.labelMode : "lyrics"
     readonly property int labelLength: setting("labelLength", 72)
     // Bar label only: show each lyric line this many ms early (0–2000), so
     // it can be read as it's sung. The popup and window stay in sync.

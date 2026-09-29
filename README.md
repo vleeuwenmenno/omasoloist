@@ -14,7 +14,7 @@ Everything follows your Omarchy theme.
 
 **Bar widget**
 
-- Now playing title and artist in the bar (can be hidden to show just the icon)
+- Now playing in the bar: the current lyric line (default), the title, title and artist, or just the icon
 - Popup with cover art, playback controls, seek bar, volume, shuffle and repeat
 - Like button, queue, device list and library shortcuts
 - Guides you through setup: starts the service, shows pairing steps
@@ -136,23 +136,30 @@ account's email under **User Management** in the app's dashboard page.
 
 ### Widget settings
 
-Settings live on the widget's entry in `~/.config/omarchy/shell.json`:
+Settings live on the widget's entry in `~/.config/omarchy/shell.json`. Most
+can be changed from the app window under **Settings → Bar widget**, which
+writes them there for you:
 
 ```json
-{ "id": "vleeuwenmenno.omasoloist", "showTitle": true }
+{ "id": "vleeuwenmenno.omasoloist", "labelMode": "title-artist", "popupHidden": [] }
 ```
 
-| Setting         | Default           | Meaning |
-|-----------------|-------------------|---------|
-| `showTitle`     | `true`            | Show title and artist in the bar; `false` shows only the icon |
-| `maxLabelWidth` | `180`             | Maximum width of the bar label, in pixels |
-| `dataDir`       | `~/.local/share/soloist` | Soloist's data directory (where it writes `ws.port`); must match its `--data-dir` |
-| `serviceName`   | `soloist.service` | Name of the systemd user unit that runs Soloist |
+| Setting           | Default           | Meaning |
+|-------------------|-------------------|---------|
+| `labelMode`       | `lyrics`          | Bar label: `icon`, `title`, `title-artist`, `artist-title` or `lyrics` (current lyric line; the title for songs without synced lyrics) |
+| `labelLength`     | `72`              | Maximum label length in characters (15–150) |
+| `lyricsOffset`    | `250`             | Show each lyric line this many ms early in the bar (0–2000) |
+| `popupHidden`     | `["library"]`     | Popup buttons to hide: `library`, `lyrics`, `app`, `devices`, `queue` |
+| `popupLyricsMode` | `cover`           | Lyrics button: `cover` (lyrics replace the cover) or `view` (own view) |
+| `popupResetView`  | `false`           | Reopen the popup on the player instead of the last view |
+| `dataDir`         | `~/.local/share/soloist` | Soloist's data directory (where it writes `ws.port`); must match its `--data-dir` |
+| `serviceName`     | `soloist.service` | Name of the systemd user unit that runs Soloist |
 
 Change them with `omarchy bar set`, for example:
 
 ```bash
-omarchy bar set vleeuwenmenno.omasoloist showTitle false --json
+omarchy bar set vleeuwenmenno.omasoloist labelMode title-artist
+omarchy bar set vleeuwenmenno.omasoloist popupHidden '[]' --json
 omarchy bar set vleeuwenmenno.omasoloist serviceName my-soloist.service
 ```
 

@@ -37,17 +37,20 @@ Item {
     readonly property string labelMode: {
         var mode = widgetSettings.labelMode;
         if (mode) return mode;
-        return widgetSettings.showTitle === false ? "icon" : "title";
+        // Default: the current lyric line (falls back to the title for
+        // songs without synced lyrics).
+        return widgetSettings.showTitle === false ? "icon" : "lyrics";
     }
     // Bar popup options (widget settings):
     //   popupHidden      buttons to hide: library, lyrics, app, devices, queue
-    //   popupLyricsMode  "view" (own view) or "cover" (in place of the cover)
+    //                    (default: library)
+    //   popupLyricsMode  "cover" (in place of the cover, default) or "view"
     //   popupResetView   back to the player view whenever the popup reopens
     // An older `popupLyrics: false` still hides the lyrics button.
     readonly property var popupHidden: Array.isArray(widgetSettings.popupHidden) ? widgetSettings.popupHidden
-        : widgetSettings.popupLyrics === false ? ["lyrics"] : []
+        : widgetSettings.popupLyrics === false ? ["library", "lyrics"] : ["library"]
     function popupShows(button) { return popupHidden.indexOf(button) < 0; }
-    readonly property string popupLyricsMode: widgetSettings.popupLyricsMode === "cover" ? "cover" : "view"
+    readonly property string popupLyricsMode: widgetSettings.popupLyricsMode === "view" ? "view" : "cover"
     readonly property bool popupResetView: widgetSettings.popupResetView === true
 
     function setPopupButton(button, shown) {
