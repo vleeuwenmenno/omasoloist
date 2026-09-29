@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "vleeuwenmenno.omasoloist",
-  "name": "Soloist",
+  "name": "OmaSoloist",
   "version": "0.3.0",
   "author": "vleeuwenmenno",
   "license": "MIT with Commons Clause",
@@ -17,7 +17,7 @@
     "panel": "AppWindow.qml"
   },
   "barWidget": {
-    "displayName": "Soloist",
+    "displayName": "OmaSoloist",
     "description": "Now playing and playback controls for Spotify Soloist.",
     "category": "Media",
     "allowMultiple": false,

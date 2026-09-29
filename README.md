@@ -1,4 +1,4 @@
-# Soloist for Omarchy
+# OmaSoloist
 
 ![OmaSoloist: the app window, Now Playing panel and bar popup](preview.png)
 
