@@ -2,7 +2,8 @@
 
 ![OmaSoloist: the app window, Now Playing panel and bar popup](preview.png)
 
-Spotify in the [Omarchy](https://omarchy.org) shell, without the Electron app.
+Spotify in the [Omarchy](https://omarchy.org) shell, without the Electron app,
+in about **100 MB of RAM** instead of the desktop app's ~2 GB.
 
 This plugin (`vleeuwenmenno.omasoloist`) adds a now-playing widget to the
 Omarchy bar and a themed, Spotify-desktop-style app window. Playback runs on
@@ -35,6 +36,21 @@ Everything follows your Omarchy theme.
   album/artist, copy link)
 - Settings page for Soloist's audio preferences: quality, volume
   normalization, crossfade, gapless playback, automix
+
+## Memory use
+
+Measured on Omarchy with the shell restarted with and without the plugin
+(PSS, which splits shared memory fairly between processes):
+
+| | Widget only | App window open |
+|---|---:|---:|
+| Plugin, inside the Omarchy shell | 1 MB | 16 MB |
+| Soloist daemon | 79 MB | 79 MB |
+| Soloist event stream (`soloist ctl trace`) | 7 MB | 7 MB |
+| **Total** | **87 MB** | **102 MB** |
+
+For comparison, the Spotify desktop app (Electron) took 1.8–2 GiB on the
+same machine.
 
 ## Requirements
 
@@ -76,7 +92,7 @@ first. Update later with `omarchy plugin update vleeuwenmenno.omasoloist`.
 plugin directory (its name must be the plugin id), then rescan:
 
 ```bash
-git clone --branch v0.3.1 --depth 1 https://github.com/vleeuwenmenno/omasoloist.git \
+git clone --branch v0.3.2 --depth 1 https://github.com/vleeuwenmenno/omasoloist.git \
   ~/.config/omarchy/plugins/vleeuwenmenno.omasoloist
 omarchy-shell shell rescanPlugins
 ```
