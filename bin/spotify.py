@@ -852,6 +852,87 @@ def cmd_profile(_args):
     }
 
 
+def gql_track(track, fallback_artist=None):
+    """A top track from a public artist page, in shape_track's format."""
+    uri = (track or {}).get("uri") or ""
+    if not uri.startswith("spotify:track:"):
+        return None
+    album = track.get("albumOfTrack") or {}
+    artists = [(a.get("profile") or {}).get("name", "") for a in (track.get("artists") or {}).get("items") or []]
+    artist_uris = [a.get("uri", "") for a in (track.get("artists") or {}).get("items") or []]
+    return {
+        "uri": uri, "name": track.get("name") or "",
+        "artists": ", ".join(a for a in artists if a) or fallback_artist or "",
+        "album": album.get("name") or "", "album_uri": album.get("uri") or "",
+        "artist_uri": artist_uris[0] if artist_uris else "",
+        "cover": gql_image(album.get("coverArt"), 64), "cover_large": gql_image(album.get("coverArt"), 300),
+        # The public pages carry no track length.
+        "duration_ms": 0,
+        "explicit": ((track.get("contentRating") or {}).get("label") == "EXPLICIT"),
+        "playable": True, "added_at": "",
+    }
+
+
+def cmd_radio(args):
+    """radio <track|artist> <id>: a song or artist radio to show as a list.
+
+    Spotify doesn't expose its radio stations' tracks to third-party apps
+    (no recommendations endpoint, station pages render client-side), so
+    this builds a similar mix from the public artist pages: the seed track,
+    then the top tracks of the seed artist and its "Fans also like" artists,
+    taken in turns. The station itself (spotify:station:…) still plays
+    through Soloist for an endless, Spotify-picked radio.
+    """
+    if len(args) < 2 or args[0] not in ("track", "artist"):
+        raise HelperError("Usage: radio <track|artist> <id>")
+    kind, ident = args[0], args[1]
+    seed_track = None
+    if kind == "track":
+        seed_track = shape_track(api("GET", "/tracks/" + urllib.parse.quote(ident, safe="")))
+        if not seed_track:
+            raise HelperError("Track not found.")
+        artist_id = seed_track["artist_uri"].split(":")[-1]
+    else:
+        artist_id = ident
+    seed_overview = public_page_entity("artist", artist_id) or {}
+    seed_name = (seed_overview.get("profile") or {}).get("name") or ""
+    related = [a.get("uri", "").split(":")[-1]
+               for a in ((seed_overview.get("relatedContent") or {}).get("relatedArtists") or {}).get("items") or []
+               if a.get("uri", "").startswith("spotify:artist:")][:8]
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        overviews = [seed_overview] + list(pool.map(lambda a: public_page_entity("artist", a) or {}, related))
+
+    pools, names = [], []
+    for overview in overviews:
+        name = (overview.get("profile") or {}).get("name") or ""
+        tracks = [gql_track((e or {}).get("track"), name)
+                  for e in ((overview.get("discography") or {}).get("topTracks") or {}).get("items") or []]
+        pools.append([t for t in tracks if t])
+        if name:
+            names.append(name)
+
+    items, seen = [], set()
+    if seed_track:
+        items.append(seed_track)
+        seen.add(seed_track["uri"])
+    for round_index in range(max((len(p) for p in pools), default=0)):
+        for pool_tracks in pools:
+            if round_index < len(pool_tracks) and pool_tracks[round_index]["uri"] not in seen:
+                seen.add(pool_tracks[round_index]["uri"])
+                items.append(pool_tracks[round_index])
+
+    title = (seed_track["name"] if seed_track else seed_name) + " Radio"
+    with_names = names[:3]
+    subtitle = ("With " + ", ".join(with_names) + (" and more" if len(names) > 3 else "")) if with_names else ""
+    cover = (seed_track or {}).get("cover_large") or gql_image((seed_overview.get("visuals") or {}).get("avatarImage"), 300)
+    station = f"spotify:station:{kind}:{ident}"
+    meta = {"kind": "radio", "uri": station, "id": f"{kind}:{ident}", "name": title,
+            "owner": subtitle, "cover": cover}
+    return dict(page(items, len(items), 0), meta=meta)
+
+
 def cmd_home(_args):
     """Home page: shortcut tiles, recently played albums, top artists/tracks.
 
@@ -1392,6 +1473,7 @@ COMMANDS = {
     "home": cmd_home,
     "artist": cmd_artist,
     "profile": cmd_profile,
+    "radio": cmd_radio,
     "quality": cmd_quality,
     "audio-path": cmd_audio_path,
     "lyrics": cmd_lyrics,

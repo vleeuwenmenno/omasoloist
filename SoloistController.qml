@@ -57,7 +57,10 @@ Item {
     readonly property string artist: creators(item)
     readonly property string album: item && item.decorations && item.decorations.parent
         ? name(item.decorations.parent.entity) : ""
-    readonly property string contextName: name(context)
+    // Radio contexts (spotify:station:…) carry no name; Service labels the
+    // ones it starts here ("Hate to See Your Heart Break Radio").
+    property var contextLabels: ({})
+    readonly property string contextName: name(context) || (context && context.uri ? contextLabels[context.uri] || "" : "")
     readonly property string coverUrl: cover(item, "large")
     readonly property real durationMs: item && item.decorations && item.decorations.playback
         ? (item.decorations.playback.duration_ms || 0) : 0

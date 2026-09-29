@@ -120,7 +120,8 @@ Item {
     }
 
     function playRow(track, index) {
-        if (!reordered) { tracks.playFrom(player, track, tracks.tracks.indexOf(track)); return; }
+        // Radio lists are our own mix, not a Spotify context: always a track list.
+        if (!reordered && !isRadio) { tracks.playFrom(player, track, tracks.tracks.indexOf(track)); return; }
         // A local order can't be a Spotify context; play it as a track list.
         tracks.pendingUri = track.uri;
         var uris = displayed.slice(index, index + 100).map(function(t) { return t.uri; });
@@ -155,9 +156,10 @@ Item {
         return entries;
     }
 
-    readonly property bool showAdded: collection !== null && collection.kind !== "album" && list.width - 32 > 860
+    readonly property bool isRadio: collection !== null && collection.kind === "radio"
+    readonly property bool showAdded: collection !== null && collection.kind !== "album" && !isRadio && list.width - 32 > 860
     readonly property string kindLabel: !collection ? ""
-        : collection.kind === "album" ? "Album" : "Playlist"
+        : collection.kind === "album" ? "Album" : isRadio ? "Radio" : "Playlist"
 
     ListView {
         id: list
@@ -275,6 +277,7 @@ Item {
                     playing: root.playingThis && root.player.playing
                     onClicked: {
                         if (root.playingThis) root.player.togglePlay();
+                        else if (root.isRadio) { if (root.displayed.length > 0) root.playRow(root.displayed[0], 0); }
                         else root.player.play(root.collection.uri);
                     }
                 }
@@ -345,6 +348,36 @@ Item {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: root.app.showMenu(root.collection, moreButton, 0, moreButton.height + 4)
+                        }
+                    }
+
+                    // Spotify's own endless station for this radio.
+                    Rectangle {
+                        visible: root.isRadio
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: endlessText.implicitWidth + 32
+                        height: 32
+                        radius: 16
+                        color: "transparent"
+                        border.width: 1
+                        border.color: endlessMouse.containsMouse ? root.fg : root.dim
+
+                        Text {
+                            id: endlessText
+                            anchors.centerIn: parent
+                            text: "󰐹  Endless radio"
+                            color: root.fg
+                            font.family: Style.font.family
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            id: endlessMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.app.service.startRadio(root.collection.uri, root.field("name"))
                         }
                     }
                 }

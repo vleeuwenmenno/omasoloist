@@ -89,6 +89,33 @@ Item {
         });
     }
 
+    // Song / artist radio. The Web API rejects station URIs ("Non supported
+    // context uri"), but Soloist's player plays them, so radio always starts
+    // on this computer, moving playback here if another device was playing.
+    // Spotify's endless station for a track or artist URI, or a
+    // spotify:station:… URI itself. `name` labels it ("… Radio").
+    function startRadio(uri, name) {
+        var parts = String(uri).split(":");
+        var station = parts[1] === "station" ? uri
+            : parts.length === 3 && (parts[1] === "track" || parts[1] === "artist")
+            ? "spotify:station:" + parts[1] + ":" + parts[2] : "";
+        if (station === "") return;
+        var labels = Object.assign({}, soloist.contextLabels);
+        labels[station] = /Radio$/.test(name || "") ? name : (name ? name + " " : "") + "Radio";
+        soloist.contextLabels = labels;
+        var moved = remoteActive;
+        soloist.play(station);
+        toast((moved ? "Playing on this computer: " : "Playing ") + labels[station]);
+    }
+
+    // Radio page for a track or artist ("Go to song radio").
+    function radioItem(uri, name, cover) {
+        var parts = String(uri).split(":");
+        return { kind: "radio", uri: "spotify:station:" + parts[1] + ":" + parts[2],
+                 id: parts[1] + ":" + parts[2], name: (name ? name + " " : "") + "Radio",
+                 cover: cover || "", owner: "" };
+    }
+
     function addToPlaylist(playlist, uri) {
         spotifyApi.call(["add-to-playlist", playlist.id, uri], function(result) {
             root.toast(result.ok ? "Added to " + playlist.name : "Couldn't add to playlist: " + result.error);
@@ -103,6 +130,7 @@ Item {
     function webUrl(uri) {
         var parts = String(uri).split(":");
         return parts[parts.length - 1] === "collection" ? "https://open.spotify.com/collection/tracks"
+            : parts[1] === "station" ? "https://open.spotify.com/station/" + parts[2] + "/" + parts[3]
             : "https://open.spotify.com/" + parts[1] + "/" + parts[2];
     }
 

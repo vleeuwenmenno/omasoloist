@@ -133,7 +133,9 @@ Item {
     // Open a spotify: URI, e.g. the playing context from the player bar.
     function openUri(uri, name, highlight) {
         var parts = String(uri || "").split(":");
-        if (parts.length >= 4 && parts[parts.length - 1] === "collection") openItem({ kind: "liked" }, highlight);
+        if (parts.length === 4 && parts[1] === "station")
+            openItem(service.radioItem("spotify:" + parts[2] + ":" + parts[3], String(name || "").replace(/ Radio$/, ""), ""), highlight);
+        else if (parts.length >= 4 && parts[parts.length - 1] === "collection") openItem({ kind: "liked" }, highlight);
         else if (parts.length === 3 && (parts[1] === "playlist" || parts[1] === "album" || parts[1] === "artist"))
             openItem({ kind: parts[1], uri: uri, id: parts[2], name: name || "", cover: "", owner: "" }, highlight);
     }
@@ -214,6 +216,8 @@ Item {
                            icon: liked ? "󰋑" : "󰋕", accent: liked,
                            action: function() { root.service.likes.toggle(uri); } });
             entries.push(queue, sep);
+            entries.push({ label: "Go to song radio", icon: "󰐹",
+                action: function() { root.openItem(root.service.radioItem(uri, item.name, item.cover_large || item.cover)); } });
             if (item.artist_uri) entries.push({ label: "Go to artist", icon: "󰀄",
                 action: function() { root.openUri(item.artist_uri, ""); } });
             if (item.album_uri) entries.push({ label: "Go to album", icon: "󰀥",
@@ -233,10 +237,16 @@ Item {
             link.label = "Copy link to playlist";
         } else if (kind === "liked") {
             entries.push(queue);
+        } else if (kind === "radio") {
+            entries.push({ label: "Start endless radio", icon: "󰐹",
+                action: function() { root.service.startRadio(uri, item.name || ""); } });
+            link.label = "Copy link to radio";
         } else if (kind === "artist") {
             if (service.api.missingScopes.indexOf("user-follow-modify") >= 0)
                 entries.push({ label: "Follow (sign in again in Settings)", icon: "󰐕", enabled: false });
             else entries.push(libraryEntry(uri, "Unfollow", "Follow"));
+            entries.push({ label: "Go to artist radio", icon: "󰐹",
+                action: function() { root.openItem(root.service.radioItem(uri, item.name, item.cover)); } });
             link.label = "Copy link to artist";
         }
         entries.push(sep, link, web);

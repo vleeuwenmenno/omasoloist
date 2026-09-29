@@ -131,7 +131,8 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         width: 48
         horizontalAlignment: Text.AlignRight
-        text: root.formatTime(root.track.duration_ms)
+        // Radio tracks from public pages have no length.
+        text: root.track.duration_ms ? root.formatTime(root.track.duration_ms) : ""
         color: root.dim
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall

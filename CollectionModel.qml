@@ -35,7 +35,8 @@ QtObject {
         loading = true;
         var requested = collection;
         var kind = collection.kind;
-        var args = kind === "liked" ? ["liked", String(tracks.length)]
+        var args = kind === "radio" ? ["radio"].concat(String(collection.id).split(":"))
+            : kind === "liked" ? ["liked", String(tracks.length)]
             : kind === "album" ? ["album-tracks", collection.id, String(tracks.length)]
             : ["playlist-tracks", collection.id, String(tracks.length)];
         api.call(args, function(result) {
