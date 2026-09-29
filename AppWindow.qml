@@ -549,6 +549,7 @@ Item {
                         color: root.surface
 
                         LibraryView {
+                            id: sidebarLibrary
                             anchors.fill: parent
                             anchors.margins: 12
                             showBack: false
@@ -559,6 +560,12 @@ Item {
                             foreground: root.fg
                             onOpenCollection: function(collection) { root.openItem(collection); }
                             onRowMenuRequested: function(entry, source, x, y) { root.showMenu(entry, source, x, y); }
+
+                            // Belt and braces: an empty library reloads whenever the window opens.
+                            Connections {
+                                target: window
+                                function onVisibleChanged() { if (window.visible) sidebarLibrary.ensureLoaded(); }
+                            }
                         }
                     }
 

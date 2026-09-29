@@ -43,12 +43,12 @@ Item {
     })
     readonly property var rows: [likedSongs].concat(playlists)
 
-    function load(reset) {
+    function load(reset, fresh) {
         if (!api || loading || (!reset && loadedAll) || !api.signedIn) return;
         if (reset) { playlists = []; loadedAll = false; }
         loading = true;
         error = "";
-        api.call(["playlists", String(playlists.length)], function(result) {
+        api.call((fresh ? ["--fresh"] : []).concat(["playlists", String(playlists.length)]), function(result) {
             root.loading = false;
             if (!result.ok) {
                 root.error = result.error;
@@ -65,11 +65,17 @@ Item {
 
     // The app window creates this view already visible, so load on
     // completion too; the popup loads when it is first opened.
-    onVisibleChanged: if (visible && playlists.length === 0) load(true)
-    Component.onCompleted: if (visible) load(true)
+    // Load as soon as sign-in is known, visible or not: the app window
+    // builds this view hidden at shell start, often before the sign-in
+    // check finishes, and a hidden item may never see a visibility change.
+    // Answers are cached, so an early load costs nothing.
+    onVisibleChanged: ensureLoaded()
+    Component.onCompleted: ensureLoaded()
+    function ensureLoaded() { if (playlists.length === 0 && !loading) load(true); }
     Connections {
         target: root.api
-        function onSignedInChanged() { if (root.api.signedIn && root.visible) root.load(true); }
+        function onSignedInChanged() { if (root.api.signedIn) root.load(true); }
+        function onCheckedChanged() { root.ensureLoaded(); }
     }
 
     Item {
@@ -100,6 +106,18 @@ Item {
             font.family: root.fontFamily
             font.pixelSize: Style.font.subtitle
             font.bold: true
+        }
+
+        // Reload, skipping the on-disk cache (new playlists from other apps).
+        Ui.Button {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.api && root.api.signedIn
+            iconText: "󰑐"
+            iconSpinning: root.loading
+            foreground: root.dim
+            tooltipText: "Refresh library"
+            onClicked: root.load(true, true)
         }
     }
 
@@ -275,7 +293,7 @@ Item {
                     width: parent.width
                     elide: Text.ElideRight
                     textFormat: Text.PlainText
-                    text: row.entry.name
+                    text: row.entry.name || ""
                     color: row.playingThis ? Color.accent : root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.bodySmall

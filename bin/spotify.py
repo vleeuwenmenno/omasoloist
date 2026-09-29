@@ -1211,6 +1211,11 @@ COMMANDS = {
 
 
 def main():
+    # "--fresh" before the command skips cached API reads (still refreshes
+    # the cache), e.g. for the library's refresh button.
+    if len(sys.argv) > 1 and sys.argv[1] == "--fresh":
+        os.environ["OMASOLOIST_FRESH"] = "1"
+        del sys.argv[1]
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
         print(json.dumps({"ok": False, "error": "Commands: " + ", ".join(COMMANDS)}))
         return 2

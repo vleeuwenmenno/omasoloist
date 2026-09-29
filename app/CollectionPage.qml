@@ -414,25 +414,31 @@ Item {
                         }
                     }
 
-                    Row {
+                    Item {
                         id: sortButton
                         anchors.verticalCenter: parent.verticalCenter
-                        spacing: 8
+                        width: sortRow.implicitWidth
+                        height: sortRow.implicitHeight
 
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: root.sortLabels[root.sortKey]
-                            color: sortMouse.containsMouse ? root.fg : root.dim
-                            font.family: Style.font.family
-                            font.pixelSize: Style.font.bodySmall
-                        }
+                        Row {
+                            id: sortRow
+                            spacing: 8
 
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: root.viewMode === "compact" ? "󰈆" : "󰷐"
-                            color: sortMouse.containsMouse ? root.fg : root.dim
-                            font.family: Style.font.family
-                            font.pixelSize: 18
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.sortLabels[root.sortKey]
+                                color: sortMouse.containsMouse ? root.fg : root.dim
+                                font.family: Style.font.family
+                                font.pixelSize: Style.font.bodySmall
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: root.viewMode === "compact" ? "󰈆" : "󰷐"
+                                color: sortMouse.containsMouse ? root.fg : root.dim
+                                font.family: Style.font.family
+                                font.pixelSize: 18
+                            }
                         }
 
                         MouseArea {
