@@ -350,7 +350,7 @@ Ui.BarWidget {
             anchors.fill: parent
             bar: root.bar
             api: spotifyApi
-            soloist: soloist
+            soloist: root.soloist
             foreground: root.foreground
             onBack: root.view = "player"
         }

@@ -49,6 +49,8 @@ Item {
         loading = true;
         error = "";
         api.call((fresh ? ["--fresh"] : []).concat(["playlists", String(playlists.length)]), function(result) {
+            // The view may be gone by now (shell reload, popup rebuilt).
+            if (!root) return;
             root.loading = false;
             if (!result.ok) {
                 root.error = result.error;
