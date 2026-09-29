@@ -707,29 +707,13 @@ def cmd_album_tracks(args):
 
 
 def artist_overview(artist_id):
-    """Scrape the public open.spotify.com artist page.
+    """Monthly listeners, play counts, Spotify bio and related artists.
 
-    The Web API has no monthly listeners, play counts, Spotify bio or
-    related artists for development-mode apps, but the public artist page
-    embeds them (base64 JSON in <script id="initialState">). This is not an
-    official interface: any failure returns None and the caller falls back
-    to Web API data. Cached for a day.
+    The Web API has none of these for development-mode apps, but the public
+    open.spotify.com artist page embeds them. Unofficial: None on failure,
+    and the caller falls back to Web API data.
     """
-    def fetch():
-        request = urllib.request.Request("https://open.spotify.com/artist/" + artist_id,
-                                         headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)",
-                                                  "Accept-Language": "en"})
-        with urllib.request.urlopen(request, timeout=15) as response:
-            html = response.read().decode("utf-8", errors="replace")
-        marker = 'id="initialState"'
-        start = html.index(">", html.index(marker)) + 1
-        state = json.loads(base64.b64decode(html[start:html.index("<", start)]))
-        return state["entities"]["items"]["spotify:artist:" + artist_id]
-
-    try:
-        return cached("overview", artist_id, 86400, fetch)
-    except Exception:  # noqa: BLE001 - unofficial source, never fatal
-        return None
+    return public_page_entity("artist", artist_id)
 
 
 def gql_image(visual, preferred=300):
@@ -807,6 +791,65 @@ def cmd_artist(args):
             "followers": int(stats.get("followers") or 0),
             # The bio carries inline <a href="spotify:…"> links; keep the text.
             "bio": re.sub(r"<[^>]+>", "", (profile.get("biography") or {}).get("text") or "")}
+
+
+def public_page_entity(kind, ident):
+    """The embedded JSON of a public open.spotify.com page (unofficial)."""
+    def fetch():
+        request = urllib.request.Request(f"https://open.spotify.com/{kind}/{ident}",
+                                         headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)",
+                                                  "Accept-Language": "en"})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            html = response.read().decode("utf-8", errors="replace")
+        start = html.index(">", html.index('id="initialState"')) + 1
+        state = json.loads(base64.b64decode(html[start:html.index("<", start)]))
+        return state["entities"]["items"][f"spotify:{kind}:{ident}"]
+
+    try:
+        return cached("overview", f"{kind}:{ident}", 86400, fetch)
+    except Exception:  # noqa: BLE001 - unofficial source, never fatal
+        return None
+
+
+def cmd_profile(_args):
+    """Your profile page: header, top artists/tracks this month, public playlists.
+
+    Follower counts are hidden from development-mode apps; the public
+    playlist count and the avatar colour come from the public profile page,
+    the following count from /me/following (needs the follow scopes).
+    """
+    me = api("GET", "/me")
+    user_id = me.get("id", "")
+    page_data = public_page_entity("user", user_id) or {}
+    colors = ((page_data.get("avatar") or {}).get("extractedColors") or {})
+    playlists = []
+    offset = 0
+    while offset < 200:
+        chunk = api("GET", "/me/playlists", {"limit": 50, "offset": offset})
+        for item in chunk.get("items") or []:
+            if item and item.get("public") and (item.get("owner") or {}).get("id") == user_id:
+                shaped = shape_playlist(item)
+                if shaped:
+                    playlists.append(shaped)
+        offset += 50
+        if offset >= chunk.get("total", 0):
+            break
+    try:
+        following = api("GET", "/me/following", {"type": "artist", "limit": 1})["artists"]["total"]
+    except (HelperError, KeyError, TypeError):
+        following = -1
+    top_artists = [x for x in (shape_artist(a) for a in
+                               api("GET", "/me/top/artists", {"limit": 10, "time_range": "short_term"}).get("items") or []) if x]
+    top_tracks = [x for x in (shape_track(t) for t in
+                              api("GET", "/me/top/tracks", {"limit": 10, "time_range": "short_term"}).get("items") or []) if x]
+    return {
+        "id": user_id, "name": me.get("display_name") or user_id, "uri": me.get("uri", ""),
+        "image": pick_image(me.get("images"), 300),
+        "color": (colors.get("colorDark") or {}).get("hex", ""),
+        "publicPlaylistCount": ((page_data.get("publicPlaylistsV2") or {}).get("totalCount")) or len(playlists),
+        "following": following,
+        "topArtists": top_artists, "topTracks": top_tracks, "playlists": playlists,
+    }
 
 
 def cmd_home(_args):
@@ -1196,6 +1239,7 @@ COMMANDS = {
     "album-tracks": cmd_album_tracks,
     "home": cmd_home,
     "artist": cmd_artist,
+    "profile": cmd_profile,
     "lyrics": cmd_lyrics,
     "liked-contains": cmd_liked_contains,
     "like": cmd_like,

@@ -10,6 +10,8 @@ Column {
     required property var app
     property string title: ""
     property string subtitle: ""
+    // Small line under the title, e.g. "Only visible to you".
+    property string caption: ""
     property var items: []
 
     // Spotify keeps cards around 160-200 px and fits as many as possible.
@@ -38,6 +40,16 @@ Column {
         font.family: Style.font.family
         font.pixelSize: Style.font.display
         font.bold: true
+    }
+
+    Text {
+        visible: root.caption !== ""
+        leftPadding: 12
+        bottomPadding: 8
+        text: root.caption
+        color: root.app.dim
+        font.family: Style.font.family
+        font.pixelSize: Style.font.bodySmall
     }
 
     Row {

@@ -202,7 +202,7 @@ Item {
         var uri = resolveUri(item);
         var entries = [];
         var link = { label: "Copy link", icon: "󰌷", action: function() { root.service.copyLink(uri); } };
-        var web = { label: "Open in web player", icon: "󰖟",
+        var web = { label: "Open in web player", icon: "󰖟", external: true,
                     action: function() { Qt.openUrlExternally(root.service.webUrl(uri)); } };
         var queue = { label: "Add to queue", icon: "󰐑", action: function() { root.service.addToQueue(uri); } };
         var sep = { separator: true };
@@ -241,6 +241,33 @@ Item {
         }
         entries.push(sep, link, web);
         return entries;
+    }
+
+    // ------------------------------------------------------ account menu
+    property var me: null
+    function loadMe() {
+        if (!service || !service.api.signedIn) return;
+        service.api.call(["me"], function(result) { if (result.ok) root.me = result; });
+    }
+    Connections {
+        target: root.service ? root.service.api : null
+        function onSignedInChanged() { if (root.service.api.signedIn) root.loadMe(); else root.me = null; }
+    }
+
+    // Spotify's avatar menu, minus what the public API can't do (private
+    // session, "Your Updates").
+    function accountMenu() {
+        var web = function(url) { return function() { Qt.openUrlExternally(url); }; };
+        return [
+            { header: me ? me.name : "Spotify" },
+            { label: "Account", icon: "󰀄", external: true, action: web("https://www.spotify.com/account/overview/") },
+            { label: "Profile", icon: "󰋜", action: function() { root.navigate({ kind: "profile" }); } },
+            { label: "Recents", icon: "󰋚", action: function() { root.navigate({ kind: "home" }); } },
+            { label: "Support", icon: "󰋖", external: true, action: web("https://support.spotify.com/") },
+            { separator: true },
+            { label: "Settings", icon: "󰒓", action: function() { root.navigate({ kind: "settings" }); } },
+            { label: "Log out", icon: "󰍃", action: function() { root.service.api.logout(); } }
+        ];
     }
 
     // Sort/view choice per collection URI, for this session.
@@ -307,7 +334,10 @@ Item {
         if (showsWindow !== countedWindow) { service.activeViewers += showsWindow ? 1 : -1; countedWindow = showsWindow; }
         if (showsQueue !== countedQueue) { service.queueViewers += showsQueue ? 1 : -1; countedQueue = showsQueue; }
     }
-    onShowsWindowChanged: syncViewers()
+    onShowsWindowChanged: {
+        syncViewers();
+        if (showsWindow && !me) loadMe();
+    }
     onShowsQueueChanged: syncViewers()
     onServiceChanged: syncViewers()
     Component.onDestruction: {
@@ -567,6 +597,34 @@ Item {
                                 onClicked: root.navigate({ kind: "settings" })
                             }
                         }
+
+                        // Account avatar with Spotify's profile menu.
+                        Rectangle {
+                            id: avatar
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: root.service.api.signedIn
+                            width: 40
+                            height: 40
+                            radius: 20
+                            color: avatarMouse.containsMouse ? root.surfaceHover : root.surface
+
+                            Cover {
+                                anchors.centerIn: parent
+                                width: 32
+                                height: 32
+                                kind: "artist"
+                                source: root.me ? root.me.image || "" : ""
+                                foreground: root.fg
+                            }
+
+                            MouseArea {
+                                id: avatarMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.showEntries(root.accountMenu(), avatar, avatar.width - 280, avatar.height + 8)
+                            }
+                        }
                     }
                 }
 
@@ -756,6 +814,12 @@ Item {
                             visible: root.page.kind === "lyrics"
                             app: root
                             info: root.trackInfo
+                        }
+
+                        ProfilePage {
+                            anchors.fill: parent
+                            visible: root.page.kind === "profile"
+                            app: root
                         }
 
                         SettingsPage {

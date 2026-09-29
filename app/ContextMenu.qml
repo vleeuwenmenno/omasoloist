@@ -5,7 +5,7 @@ import qs.Commons
 
 // Spotify-style right-click menu, drawn with the theme tokens. `entries`
 // is a list of {label, icon, action, enabled, separator, submenu, checked,
-// header, note}: `header` is a small section title ("Sort by"), `note` a
+// external, header, note}: `header` is a small section title ("Sort by"), `note` a
 // line of explanatory text, `checked` marks the current choice. An entry
 // with `submenu` (a list of the same shape, or a function returning one)
 // opens a second menu beside it.
@@ -131,11 +131,12 @@ Controls.Popup {
 
         Text {
             id: arrow
-            visible: !!menuRow.entry.submenu || !!menuRow.entry.checked
+            visible: !!menuRow.entry.submenu || !!menuRow.entry.checked || !!menuRow.entry.external
             anchors.right: parent.right
             anchors.rightMargin: 12
             anchors.verticalCenter: parent.verticalCenter
-            text: menuRow.entry.checked ? "󰄬" : "󰍟"
+            // ✓ current choice, ↗ opens the browser, › submenu.
+            text: menuRow.entry.checked ? "󰄬" : menuRow.entry.external ? "󰏌" : "󰍟"
             color: menuRow.entry.checked ? root.app.accent : root.app.dim
             font.family: Style.font.family
             font.pixelSize: 14
