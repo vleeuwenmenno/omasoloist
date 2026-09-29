@@ -276,8 +276,16 @@ Item {
             { label: "Support", icon: "󰋖", external: true, action: web("https://support.spotify.com/") },
             { separator: true },
             { label: "Settings", icon: "󰒓", action: function() { root.navigate({ kind: "settings" }); } },
-            { label: "Log out", icon: "󰍃", action: function() { root.service.api.logout(); } }
-        ];
+            { label: "Log out", icon: "󰍃", action: function() { root.service.api.logout(); } },
+            { separator: true }
+        ].concat(service.updateAvailable ? [
+            { label: "Update to " + service.latestVersion, icon: "󰚰", accent: true,
+              action: function() { root.service.runUpdate(); } },
+            { label: "What's new", icon: "󰋼", external: true,
+              action: function() { Qt.openUrlExternally(root.service.releasesUrl); } }
+        ] : []).concat([
+            { note: "OmaSoloist " + (service.version || "") + (service.updateAvailable ? " • " + service.latestVersion + " available" : "") }
+        ]);
     }
 
     // Sort/view choice per collection URI, for this session.
@@ -625,6 +633,19 @@ Item {
                                 kind: "artist"
                                 source: root.me ? root.me.image || "" : ""
                                 foreground: root.fg
+                            }
+
+                            // Update available.
+                            Rectangle {
+                                visible: root.service.updateAvailable
+                                anchors.top: parent.top
+                                anchors.right: parent.right
+                                width: 12
+                                height: 12
+                                radius: 6
+                                color: root.accent
+                                border.width: 2
+                                border.color: root.bg
                             }
 
                             MouseArea {

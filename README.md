@@ -92,7 +92,7 @@ first. Update later with `omarchy plugin update vleeuwenmenno.omasoloist`.
 plugin directory (its name must be the plugin id), then rescan:
 
 ```bash
-git clone --branch v0.3.2 --depth 1 https://github.com/vleeuwenmenno/omasoloist.git \
+git clone --branch v0.3.3 --depth 1 https://github.com/vleeuwenmenno/omasoloist.git \
   ~/.config/omarchy/plugins/vleeuwenmenno.omasoloist
 omarchy-shell shell rescanPlugins
 ```

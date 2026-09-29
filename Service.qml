@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import "Entity.js" as Entity
 import "app"
 
@@ -198,6 +199,55 @@ Item {
                 }
             });
         }
+    }
+
+    // ------------------------------------------------------ version check
+    // Installed version from our manifest; newest release from the GitHub
+    // tags (bin/spotify.py update-check, cached 6 h). A desktop notification
+    // is sent once per newer version.
+    property string version: ""
+    property string latestVersion: ""
+    property bool updateOutdated: false
+    readonly property bool updateAvailable: updateOutdated && latestVersion !== ""
+    readonly property string releasesUrl: "https://github.com/vleeuwenmenno/omasoloist/releases"
+
+    FileView {
+        path: decodeURIComponent(Qt.resolvedUrl("manifest.json").toString().replace(/^file:\/\//, ""))
+        printErrors: false
+        onLoaded: {
+            try { root.version = JSON.parse(text()).version || ""; } catch (e) {}
+            updateTimer.restart();
+        }
+    }
+
+    function checkForUpdate() {
+        if (version === "") return;
+        spotifyApi.call(["update-check", version], function(result) {
+            if (!result.ok) return;
+            root.latestVersion = result.latest;
+            root.updateOutdated = result.outdated;
+            if (result.notify)
+                Quickshell.execDetached(["notify-send", "--app-name=OmaSoloist", "--icon=software-update-available",
+                    "OmaSoloist " + result.latest + " is available",
+                    "You have " + root.version + ". Update from the avatar menu in the OmaSoloist window."]);
+        });
+    }
+
+    // Let the shell settle after start, then check every 6 hours.
+    Timer {
+        id: updateTimer
+        interval: 30000
+        onTriggered: {
+            root.checkForUpdate();
+            interval = 6 * 3600 * 1000;
+            restart();
+        }
+    }
+
+    // Update in a floating terminal, so its output and any prompt are visible.
+    function runUpdate() {
+        Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation",
+            "omarchy plugin update vleeuwenmenno.omasoloist && echo && echo 'Restart the shell to finish: omarchy restart shell'"]);
     }
 
     // Catch likes made in other Spotify apps.

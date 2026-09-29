@@ -1453,6 +1453,41 @@ def cmd_audio_path(args):
     return result
 
 
+# ---------------------------------------------------------- update check
+
+REPOSITORY = "vleeuwenmenno/omasoloist"
+UPDATE_STATE = os.path.join(STATE_DIR, "update.json")
+
+
+def version_key(tag):
+    """"v0.3.10" -> (0, 3, 10); anything unparsable sorts first."""
+    parts = re.findall(r"\d+", tag or "")
+    return tuple(int(p) for p in parts[:4]) if parts else (-1,)
+
+
+def cmd_update_check(args):
+    """update-check <installed version>
+
+    Newest release tag on GitHub (cached for 6 hours, anonymous API), and
+    whether a desktop notification is due: once per newer version.
+    """
+    installed = args[0] if args else "0"
+
+    def fetch():
+        tags = get_public_json(f"https://api.github.com/repos/{REPOSITORY}/tags?per_page=100") or []
+        names = [t.get("name", "") for t in tags if re.match(r"^v?\d+(\.\d+)*$", t.get("name", ""))]
+        return {"latest": max(names, key=version_key) if names else ""}
+
+    latest = cached("update", REPOSITORY, 6 * 3600, fetch).get("latest", "")
+    outdated = bool(latest) and version_key(latest) > version_key(installed)
+    state = read_json(UPDATE_STATE, {})
+    notify = outdated and state.get("notified") != latest
+    if notify:
+        write_private_json(UPDATE_STATE, dict(state, notified=latest))
+    return {"installed": installed, "latest": latest.lstrip("v"), "outdated": outdated, "notify": notify,
+            "releasesUrl": f"https://github.com/{REPOSITORY}/releases"}
+
+
 COMMANDS = {
     "status": cmd_status,
     "set-client-id": cmd_set_client_id,
@@ -1474,6 +1509,7 @@ COMMANDS = {
     "artist": cmd_artist,
     "profile": cmd_profile,
     "radio": cmd_radio,
+    "update-check": cmd_update_check,
     "quality": cmd_quality,
     "audio-path": cmd_audio_path,
     "lyrics": cmd_lyrics,
