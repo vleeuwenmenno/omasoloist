@@ -1,0 +1,115 @@
+import QtQuick
+import Quickshell
+import "Entity.js" as Entity
+
+// Shared state for the bar widget and the app window: one Soloist
+// connection, one Web API client and one remote-playback poller, no matter
+// how many monitors show the bar.
+Item {
+    id: root
+    visible: false
+
+    property var shell: null
+    property var manifest: null
+
+    // Per-widget settings are read from shell.json by the bar widget and
+    // pushed here; these are the defaults until then.
+    property string dataDir: ""
+    property string serviceName: "soloist.service"
+    property string installUrl: "https://github.com/vleeuwenmenno/omasoloist/blob/main/docs/install-soloist-systemd.md"
+
+    // Anything showing the queue (bar popup or app window) bumps this while
+    // it is visible so the controllers fetch the long list.
+    property int queueViewers: 0
+    // Bumped while a UI is visible so remote state is polled faster.
+    property int activeViewers: 0
+
+    readonly property alias api: spotifyApi
+    readonly property alias soloist: soloistController
+    readonly property alias remote: remotePlayer
+    readonly property alias likes: likeState
+
+    readonly property bool remoteActive: remote.active && !soloist.isActive
+        && remote.deviceId !== "" && remote.deviceId !== soloist.deviceId
+    // Whatever is playing right now: Soloist here, or a remote device.
+    readonly property var player: remoteActive ? remote : soloist
+    readonly property bool ready: soloist.loggedIn || remoteActive
+
+    // Transient messages ("Added to queue"); the app window shows them.
+    signal toast(string text)
+
+    function addToQueue(uri, label) {
+        if (!uri) return;
+        spotifyApi.call(["add-to-queue", root.player.deviceName, uri], function(result) {
+            if (!result.ok) { root.toast("Couldn't add to queue: " + result.error); return; }
+            root.toast(result.queued === 1 ? "Added to queue" : "Added " + result.queued + " songs to queue");
+            if (root.player.refreshQueue) root.player.refreshQueue();
+        });
+    }
+
+    function addToPlaylist(playlist, uri) {
+        spotifyApi.call(["add-to-playlist", playlist.id, uri], function(result) {
+            root.toast(result.ok ? "Added to " + playlist.name : "Couldn't add to playlist: " + result.error);
+        });
+    }
+
+    function copyLink(uri) {
+        Quickshell.execDetached(["wl-copy", webUrl(uri)]);
+        root.toast("Link copied to clipboard");
+    }
+
+    function webUrl(uri) {
+        var parts = String(uri).split(":");
+        return parts[parts.length - 1] === "collection" ? "https://open.spotify.com/collection/tracks"
+            : "https://open.spotify.com/" + parts[1] + "/" + parts[2];
+    }
+
+    // Open the app window. `payload` may be a page name ("settings") or
+    // {uri, name, highlight} to open an album/artist/playlist (and scroll
+    // to the `highlight` track in it).
+    function openApp(payload) {
+        if (!shell || typeof shell.summon !== "function") return;
+        var data = typeof payload === "string" ? { page: payload } : (payload || {});
+        shell.summon("vleeuwenmenno.omasoloist", JSON.stringify(data));
+    }
+
+    // Links for the playing track, used by both UIs.
+    function albumUri() { return Entity.albumUri(player ? player.item : null); }
+    function artistUri() { return Entity.artistUri(player ? player.item : null); }
+
+    SpotifyApi { id: spotifyApi }
+
+    Likes {
+        id: likeState
+        api: spotifyApi
+        currentUri: root.player && root.player.item ? root.player.item.uri || "" : ""
+    }
+
+    // Catch likes made in other Spotify apps.
+    Timer {
+        interval: 30000
+        repeat: true
+        running: spotifyApi.signedIn && root.ready
+        onTriggered: likeState.refreshCurrent()
+    }
+    Connections {
+        target: spotifyApi
+        function onSignedInChanged() { if (spotifyApi.signedIn) likeState.refreshCurrent(); }
+    }
+
+    SoloistController {
+        id: soloistController
+        dataDir: root.dataDir
+        serviceName: root.serviceName
+        queueWanted: root.queueViewers > 0 && loggedIn && !root.remoteActive
+    }
+
+    RemotePlayer {
+        id: remotePlayer
+        api: spotifyApi
+        polling: spotifyApi.signedIn && !soloistController.isActive
+        fast: root.activeViewers > 0
+        likedSongsUri: soloistController.likedSongsUri
+        queueWanted: root.queueViewers > 0 && root.remoteActive
+    }
+}

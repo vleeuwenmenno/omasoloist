@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "vleeuwenmenno.omasoloist",
+  "name": "Soloist",
+  "version": "0.2.0",
+  "author": "vleeuwenmenno",
+  "license": "MIT with Commons Clause",
+  "description": "Spotify for Omarchy: a Soloist-powered player in the bar and a themed app window.",
+  "kinds": [
+    "service",
+    "bar-widget",
+    "panel"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml",
+    "panel": "AppWindow.qml"
+  },
+  "barWidget": {
+    "displayName": "Soloist",
+    "description": "Now playing and playback controls for Spotify Soloist.",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  },
+  "keepLoaded": true
+}
