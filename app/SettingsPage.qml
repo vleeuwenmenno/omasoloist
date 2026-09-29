@@ -392,13 +392,52 @@ Flickable {
             }
         }
 
+        // Popup buttons, each can be hidden.
+        Repeater {
+            model: [
+                { id: "library", label: "Your Library button", detail: "Opens your playlists in the popup" },
+                { id: "lyrics", label: "Lyrics button", detail: "Shown for songs that have lyrics" },
+                { id: "app", label: "Open app button", detail: "Opens this window" },
+                { id: "devices", label: "Devices button", detail: "Switch playback to another device" },
+                { id: "queue", label: "Queue button", detail: "Shows what plays next" }
+            ]
+
+            SettingRow {
+                id: buttonRow
+                required property var modelData
+                label: modelData.label
+                detail: modelData.detail
+
+                Ui.ToggleSwitch {
+                    checked: root.service.popupShows(buttonRow.modelData.id)
+                    onToggled: root.service.setPopupButton(buttonRow.modelData.id, !checked)
+                }
+            }
+        }
+
         SettingRow {
+            visible: root.service.popupShows("lyrics")
             label: "Lyrics in the popup"
-            detail: "Show a lyrics button in the bar popup for songs that have lyrics"
+            detail: root.service.popupLyricsMode === "cover"
+                ? "The lyrics button swaps the cover for the lyrics; the controls stay visible"
+                : "The lyrics button opens a lyrics view with a back button"
+
+            Ui.Dropdown {
+                width: 220
+                showLabel: false
+                options: ["Own view", "In place of the cover"]
+                value: root.service.popupLyricsMode === "cover" ? "In place of the cover" : "Own view"
+                onChanged: function(v) { root.service.saveWidgetSettings({ popupLyricsMode: v === "Own view" ? "view" : "cover" }); }
+            }
+        }
+
+        SettingRow {
+            label: "Reopen on the player"
+            detail: "When the popup opens again, show the player instead of the last view you had open (lyrics, queue, library…)"
 
             Ui.ToggleSwitch {
-                checked: root.service.popupLyrics
-                onToggled: root.service.saveWidgetSettings({ popupLyrics: !root.service.popupLyrics })
+                checked: root.service.popupResetView
+                onToggled: root.service.saveWidgetSettings({ popupResetView: !root.service.popupResetView })
             }
         }
 

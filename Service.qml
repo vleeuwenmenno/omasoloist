@@ -39,8 +39,22 @@ Item {
         if (mode) return mode;
         return widgetSettings.showTitle === false ? "icon" : "title";
     }
-    // Lyrics button in the bar popup (widget setting, on by default).
-    readonly property bool popupLyrics: widgetSettings.popupLyrics !== false
+    // Bar popup options (widget settings):
+    //   popupHidden      buttons to hide: library, lyrics, app, devices, queue
+    //   popupLyricsMode  "view" (own view) or "cover" (in place of the cover)
+    //   popupResetView   back to the player view whenever the popup reopens
+    // An older `popupLyrics: false` still hides the lyrics button.
+    readonly property var popupHidden: Array.isArray(widgetSettings.popupHidden) ? widgetSettings.popupHidden
+        : widgetSettings.popupLyrics === false ? ["lyrics"] : []
+    function popupShows(button) { return popupHidden.indexOf(button) < 0; }
+    readonly property string popupLyricsMode: widgetSettings.popupLyricsMode === "cover" ? "cover" : "view"
+    readonly property bool popupResetView: widgetSettings.popupResetView === true
+
+    function setPopupButton(button, shown) {
+        var hidden = popupHidden.filter(function(b) { return b !== button; });
+        if (!shown) hidden.push(button);
+        saveWidgetSettings({ popupHidden: hidden });
+    }
     // Set by the app window while it's open.
     property bool windowOpen: false
 
@@ -50,6 +64,7 @@ Item {
         var next = Object.assign({}, widgetSettings, changes);
         delete next.id;
         delete next.showTitle;          // superseded by labelMode
+        if ("popupHidden" in changes) delete next.popupLyrics;   // superseded by popupHidden
         return shell.updateEntryInline("vleeuwenmenno.omasoloist", next);
     }
 

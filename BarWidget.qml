@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
@@ -12,6 +13,9 @@ Ui.BarWidget {
 
     property bool popupOpen: false
     property string view: "player"
+    // Lyrics shown in place of the cover (popupLyricsMode "cover").
+    property bool coverLyrics: false
+    readonly property bool showsCoverLyrics: coverLyrics && svc !== null && svc.trackInfo.lyricsAvailable
     readonly property bool opened: popupOpen
     readonly property color foreground: bar ? bar.foreground : Color.foreground
     readonly property string spotifyGlyph: String.fromCodePoint(0xf1bc)
@@ -120,7 +124,14 @@ Ui.BarWidget {
         if (popupOpen !== countedActive) { svc.activeViewers += popupOpen ? 1 : -1; countedActive = popupOpen; }
     }
     onShowsQueueChanged: syncViewers()
-    onPopupOpenChanged: syncViewers()
+    onPopupOpenChanged: {
+        syncViewers();
+        // Optionally start from the player view every time the popup opens.
+        if (!popupOpen && svc && svc.popupResetView) {
+            view = "player";
+            coverLyrics = false;
+        }
+    }
     onSvcChanged: syncViewers()
     Component.onDestruction: { popupOpen = false; syncViewers(); }
 
@@ -311,12 +322,25 @@ Ui.BarWidget {
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     source: root.player.coverUrl
-                    visible: source !== ""
+                    visible: source !== "" && !root.showsCoverLyrics
+                }
+
+                // Lyrics in place of the cover, same size, controls stay put.
+                LyricsPage {
+                    anchors.fill: parent
+                    anchors.margins: Style.space(2)
+                    visible: root.showsCoverLyrics
+                    radius: Style.spacing.labelGap
+                    clip: true
+                    app: lyricsApp
+                    info: root.svc ? root.svc.trackInfo : null
+                    lineSize: Style.font.heading + 2
+                    sideMargin: Style.space(14)
                 }
 
                 Text {
                     anchors.centerIn: parent
-                    visible: root.player.coverUrl === ""
+                    visible: root.player.coverUrl === "" && !root.showsCoverLyrics
                     text: root.spotifyGlyph
                     color: root.foreground
                     font.family: root.bar.fontFamily
@@ -571,14 +595,15 @@ Ui.BarWidget {
                 foreground: root.foreground
             }
 
-            Row {
+            // Bottom buttons; each can be hidden in Settings → Bar widget.
+            RowLayout {
                 visible: root.ready
                 width: parent.width
                 spacing: Style.space(6)
 
                 Ui.Button {
-                    width: parent.width - queueButton.width - devicesButton.width - appButton.width
-                        - (lyricsButton.visible ? lyricsButton.width + parent.spacing : 0) - parent.spacing * 3
+                    visible: root.svc !== null && root.svc.popupShows("library")
+                    Layout.fillWidth: true
                     leftAlign: true
                     iconText: "󰌱"
                     text: "Your Library"
@@ -586,19 +611,29 @@ Ui.BarWidget {
                     onClicked: root.view = "library"
                 }
 
+                // Keeps the icons right-aligned when the library button is hidden.
+                Item {
+                    visible: root.svc === null || !root.svc.popupShows("library")
+                    Layout.fillWidth: true
+                }
+
                 Ui.Button {
                     id: lyricsButton
-                    // Only when this song has lyrics; can be turned off in
-                    // the app's Settings → Bar widget.
-                    visible: root.svc !== null && root.svc.popupLyrics && root.svc.trackInfo.lyricsAvailable
+                    // Only for songs with lyrics.
+                    visible: root.svc !== null && root.svc.popupShows("lyrics") && root.svc.trackInfo.lyricsAvailable
                     iconText: "󰍬"
-                    foreground: root.foreground
-                    tooltipText: "Lyrics"
-                    onClicked: root.view = "lyrics"
+                    foreground: root.showsCoverLyrics ? Color.accent : root.foreground
+                    selected: root.showsCoverLyrics
+                    tooltipText: root.showsCoverLyrics ? "Show cover" : "Lyrics"
+                    onClicked: {
+                        if (root.svc.popupLyricsMode === "cover") root.coverLyrics = !root.coverLyrics;
+                        else root.view = "lyrics";
+                    }
                 }
 
                 Ui.Button {
                     id: appButton
+                    visible: root.svc !== null && root.svc.popupShows("app")
                     iconText: "󰏌"
                     foreground: root.foreground
                     tooltipText: "Open Soloist"
@@ -610,6 +645,7 @@ Ui.BarWidget {
 
                 Ui.Button {
                     id: devicesButton
+                    visible: root.svc !== null && root.svc.popupShows("devices")
                     iconText: "󰓃"
                     foreground: root.remoteActive ? Color.accent : root.foreground
                     selected: root.remoteActive
@@ -619,6 +655,7 @@ Ui.BarWidget {
 
                 Ui.Button {
                     id: queueButton
+                    visible: root.svc !== null && root.svc.popupShows("queue")
                     iconText: "󰲸"
                     foreground: root.foreground
                     tooltipText: "Queue"
