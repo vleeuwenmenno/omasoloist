@@ -709,6 +709,7 @@ Item {
                             api: root.service.api
                             foreground: root.fg
                             glyph: String.fromCodePoint(0xf1bc)
+                            onContextRequested: root.openPlayingContext()
                         }
 
                         DevicesView {

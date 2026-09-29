@@ -312,6 +312,7 @@ Ui.BarWidget {
             foreground: root.foreground
             glyph: root.spotifyGlyph
             onBack: root.view = "player"
+            onContextRequested: if (root.player.context) root.openInApp(root.player.context.uri, root.player.contextName)
         }
 
         LibraryView {

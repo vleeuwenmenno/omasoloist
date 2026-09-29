@@ -26,6 +26,8 @@ Item {
     property bool showBack: true
 
     signal back()
+    // The "Next from: <playlist>" heading was clicked (Spotify links it).
+    signal contextRequested()
 
     readonly property color dim: Qt.darker(foreground, 1.45)
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -64,7 +66,8 @@ Item {
             if (!entry || !entry.item) return;
             // An edited queue is one flat list once applied.
             var header = localOrder ? "Next up" : (labels[entry.source] || contextLabel);
-            if (header !== lastHeader) list.push({ header: header });
+            // The context's own heading links to it.
+            if (header !== lastHeader) list.push({ header: header, link: header === contextLabel && !!controller.context && !!controller.contextName });
             lastHeader = header;
             list.push({ entity: entry.item, current: false, upcomingIndex: index,
                         recommended: !!controller.smartShuffle && entry.source !== "context" && entry.source !== "queue" });
@@ -356,6 +359,16 @@ Item {
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
                 font.bold: true
+                font.underline: headerLink.containsMouse
+
+                MouseArea {
+                    id: headerLink
+                    anchors.fill: parent
+                    enabled: row.isHeader && !!row.modelData.link
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.contextRequested()
+                }
             }
 
             Rectangle {
