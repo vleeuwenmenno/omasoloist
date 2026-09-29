@@ -316,13 +316,13 @@ Item {
     }
 
     // Lyrics and artist info for the playing track.
-    TrackInfo {
-        id: trackInfo
-        api: root.service ? root.service.api : null
-        player: root.service ? root.service.player : null
-        // Always look lyrics up while the window is open, so the lyrics
-        // button can hide itself for songs without any (answers are cached).
-        active: window.visible
+    // Lyrics/artist info live in the service (the bar can show lyrics too).
+    readonly property var trackInfo: service ? service.trackInfo : null
+    Binding {
+        when: root.service !== null
+        target: root.service
+        property: "windowOpen"
+        value: window.visible
     }
 
     readonly property var info: trackInfo
@@ -627,7 +627,7 @@ Item {
                             anchors.margins: 16
                             visible: root.rightPanel === "nowplaying"
                             app: root
-                            info: trackInfo
+                            info: root.trackInfo
                             onCloseRequested: root.rightPanel = ""
                         }
 
@@ -712,7 +712,7 @@ Item {
                             anchors.fill: parent
                             visible: root.page.kind === "lyrics"
                             app: root
-                            info: trackInfo
+                            info: root.trackInfo
                         }
 
                         SettingsPage {

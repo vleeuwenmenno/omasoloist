@@ -27,6 +27,14 @@ Flickable {
     property string error: ""
     readonly property bool dirty: Object.keys(pending).length > 0
 
+    readonly property var labelModes: [
+        { id: "icon", label: "Icon only" },
+        { id: "title", label: "Song title" },
+        { id: "title-artist", label: "Title – Artist" },
+        { id: "artist-title", label: "Artist – Title" },
+        { id: "lyrics", label: "Current lyric line" }
+    ]
+
     readonly property var qualities: [
         { label: "Automatic", value: null },
         { label: "Low", value: "1" },
@@ -327,6 +335,71 @@ Flickable {
             color: Color.urgent
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
+        }
+
+        // ------------------------------------------------------- bar widget
+        SectionTitle { text: "Bar widget" }
+
+        SettingRow {
+            label: "Label next to the icon"
+            detail: root.service.labelMode === "lyrics"
+                ? "Shows the line being sung; songs without synced lyrics show the title"
+                : "What the bar shows while music plays"
+
+            Ui.Dropdown {
+                width: 220
+                showLabel: false
+                options: root.labelModes.map(function(m) { return m.label; })
+                value: (root.labelModes.filter(function(m) { return m.id === root.service.labelMode; })[0] || root.labelModes[1]).label
+                onChanged: function(v) {
+                    var mode = root.labelModes.filter(function(m) { return m.label === v; })[0];
+                    if (mode) root.service.saveWidgetSettings({ labelMode: mode.id });
+                }
+            }
+        }
+
+        SettingRow {
+            visible: root.service.labelMode !== "icon"
+            label: "Maximum length"
+            detail: (root.service.widgetSettings.labelLength || 72) + " characters, longer text is cut off with …"
+
+            Ui.PanelSlider {
+                width: 240
+                bar: null
+                minimum: 15
+                maximum: 150
+                step: 5
+                integer: true
+                value: root.service.widgetSettings.labelLength || 72
+                onReleased: function(v) { root.service.saveWidgetSettings({ labelLength: Math.round(v) }); }
+            }
+        }
+
+        SettingRow {
+            visible: root.service.labelMode === "lyrics"
+            label: "Show lyrics early"
+            detail: ((root.service.widgetSettings.lyricsOffset ?? 250)) + " ms ahead of the song, in the bar only"
+
+            Ui.PanelSlider {
+                width: 240
+                bar: null
+                minimum: 0
+                maximum: 2000
+                step: 50
+                integer: true
+                value: (root.service.widgetSettings.lyricsOffset ?? 250)
+                onReleased: function(v) { root.service.saveWidgetSettings({ lyricsOffset: Math.round(v / 50) * 50 }); }
+            }
+        }
+
+        SettingRow {
+            label: "Lyrics in the popup"
+            detail: "Show a lyrics button in the bar popup for songs that have lyrics"
+
+            Ui.ToggleSwitch {
+                checked: root.service.popupLyrics
+                onToggled: root.service.saveWidgetSettings({ popupLyrics: !root.service.popupLyrics })
+            }
         }
 
         // ------------------------------------------------------------ about

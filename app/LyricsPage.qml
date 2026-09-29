@@ -10,6 +10,9 @@ Rectangle {
 
     required property var app
     required property var info
+    // The bar popup shows a smaller version.
+    property int lineSize: 32
+    property int sideMargin: 48
 
     readonly property var player: app.service.player
     readonly property color tint: Qt.darker(app.accent, 1.8)
@@ -42,8 +45,8 @@ Rectangle {
     ListView {
         id: list
         anchors.fill: parent
-        anchors.leftMargin: 48
-        anchors.rightMargin: 48
+        anchors.leftMargin: root.sideMargin
+        anchors.rightMargin: root.sideMargin
         clip: true
         spacing: 14
         boundsBehavior: Flickable.StopAtBounds
@@ -88,7 +91,7 @@ Rectangle {
             text: lineText
             color: !synced ? "white" : current ? "white" : past ? Qt.rgba(1, 1, 1, 0.75) : Qt.rgba(0, 0, 0, 0.55)
             font.family: Style.font.family
-            font.pixelSize: 32
+            font.pixelSize: root.lineSize
             font.bold: true
             Behavior on color { ColorAnimation { duration: 200 } }
 
@@ -107,7 +110,7 @@ Rectangle {
     Text {
         anchors.centerIn: parent
         visible: root.info.lyrics === null || !root.info.lyrics.found || root.info.lyrics.instrumental
-        width: parent.width - 96
+        width: parent.width - root.sideMargin * 2
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
         text: !root.player.hasItem ? "Play something to see its lyrics."

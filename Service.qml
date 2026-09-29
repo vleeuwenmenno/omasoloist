@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import "Entity.js" as Entity
+import "app"
 
 // Shared state for the bar widget and the app window: one Soloist
 // connection, one Web API client and one remote-playback poller, no matter
@@ -28,6 +29,29 @@ Item {
     readonly property alias soloist: soloistController
     readonly property alias remote: remotePlayer
     readonly property alias likes: likeState
+    readonly property alias trackInfo: trackInfoState
+
+    // The bar widget's shell.json entry, pushed here by the widget so the
+    // app window's Settings page can edit it (see saveWidgetSettings).
+    property var widgetSettings: ({})
+    readonly property string labelMode: {
+        var mode = widgetSettings.labelMode;
+        if (mode) return mode;
+        return widgetSettings.showTitle === false ? "icon" : "title";
+    }
+    // Lyrics button in the bar popup (widget setting, on by default).
+    readonly property bool popupLyrics: widgetSettings.popupLyrics !== false
+    // Set by the app window while it's open.
+    property bool windowOpen: false
+
+    // Replace the widget's entry with its current settings plus `changes`.
+    function saveWidgetSettings(changes) {
+        if (!shell || typeof shell.updateEntryInline !== "function") return false;
+        var next = Object.assign({}, widgetSettings, changes);
+        delete next.id;
+        delete next.showTitle;          // superseded by labelMode
+        return shell.updateEntryInline("vleeuwenmenno.omasoloist", next);
+    }
 
     readonly property bool remoteActive: remote.active && !soloist.isActive
         && remote.deviceId !== "" && remote.deviceId !== soloist.deviceId
@@ -78,6 +102,15 @@ Item {
     function artistUri() { return Entity.artistUri(player ? player.item : null); }
 
     SpotifyApi { id: spotifyApi }
+
+    // Lyrics and artist info for the playing track: needed by the app
+    // window, and by the bar when it shows the current lyric line.
+    TrackInfo {
+        id: trackInfoState
+        api: spotifyApi
+        player: root.player
+        active: root.windowOpen || root.activeViewers > 0 || root.labelMode === "lyrics"
+    }
 
     Likes {
         id: likeState

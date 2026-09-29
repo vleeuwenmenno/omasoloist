@@ -329,8 +329,10 @@ Item {
         }
     }
 
+    // Position ticks 4× a second so synced lyrics (and the bar's early
+    // offset) land close to the beat.
     Timer {
-        interval: 1000
+        interval: 250
         repeat: true
         running: root.playing
         onTriggered: root.now = Date.now()

@@ -4,6 +4,7 @@ import Quickshell.Hyprland
 import Quickshell.Io
 import qs.Commons
 import qs.Ui as Ui
+import "app"
 
 Ui.BarWidget {
     id: root
@@ -14,8 +15,40 @@ Ui.BarWidget {
     readonly property bool opened: popupOpen
     readonly property color foreground: bar ? bar.foreground : Color.foreground
     readonly property string spotifyGlyph: String.fromCodePoint(0xf1bc)
-    readonly property real maxLabelWidth: setting("maxLabelWidth", 180)
-    readonly property bool showTitle: setting("showTitle", true)
+    // Label next to the icon: "icon", "title", "title-artist",
+    // "artist-title" or "lyrics" (current lyric line); editable in the app
+    // window's Settings. `labelLength` caps it in characters.
+    readonly property string labelMode: svc ? svc.labelMode : "title"
+    readonly property int labelLength: setting("labelLength", 72)
+    // Bar label only: show each lyric line this many ms early (0–2000), so
+    // it can be read as it's sung. The popup and window stay in sync.
+    readonly property int lyricsOffset: Math.max(0, Math.min(2000, setting("lyricsOffset", 250)))
+
+    function clip(text) {
+        return text.length > labelLength ? text.slice(0, labelLength - 1) + "…" : text;
+    }
+
+    readonly property string label: {
+        if (!player || !player.hasItem || vertical) return "";
+        var title = player.title, artist = player.artist;
+        switch (labelMode) {
+        case "icon": return "";
+        case "title-artist": return artist ? title + " – " + artist : title;
+        case "artist-title": return artist ? artist + " – " + title : title;
+        case "lyrics": {
+            var info = svc.trackInfo;
+            var position = player.estimatedPositionMs + 250 + lyricsOffset;
+            var index = -1;
+            for (var i = 0; i < info.synced.length && info.synced[i].t <= position; i++) index = i;
+            var line = index >= 0 ? info.synced[index].text : "";
+            // Between lines (instrumental breaks) show a note; no synced
+            // lyrics at all falls back to the title.
+            if (info.hasSynced) return line && line.trim() !== "" ? line : "♪";
+            return title;
+        }
+        default: return title;
+        }
+    }
 
     function open() { popupOpen = true; }
     function close() { popupOpen = false; }
@@ -74,6 +107,7 @@ Ui.BarWidget {
     property var openedCollection: null
 
     Binding { when: root.svc !== null; target: root.svc; property: "dataDir"; value: root.setting("dataDir", "") }
+    Binding { when: root.svc !== null; target: root.svc; property: "widgetSettings"; value: root.settings || ({}) }
     Binding { when: root.svc !== null; target: root.svc; property: "serviceName"; value: root.setting("serviceName", "soloist.service") }
 
     // Tell the service when this popup shows the queue or anything at all.
@@ -95,8 +129,7 @@ Ui.BarWidget {
         anchors.fill: parent
         bar: root.bar
         dimmed: !root.ready
-        text: root.spotifyGlyph + (root.showTitle && !root.vertical && root.player.hasItem
-            ? "  " + (root.player.title.length > 40 ? root.player.title.slice(0, 39) + "…" : root.player.title) : "")
+        text: root.spotifyGlyph + (root.label !== "" ? "  " + root.clip(root.label) : "")
         tooltipText: root.remoteActive
                 ? (remote.hasItem ? remote.title + (remote.artist ? " — " + remote.artist : "") + "\n" : "")
                   + "Playing on " + remote.deviceName
@@ -123,6 +156,76 @@ Ui.BarWidget {
         open: root.popupOpen
         contentWidth: popup.fittedContentWidth(Style.space(340))
         contentHeight: popup.fittedContentHeight(column.visible ? column.implicitHeight : Style.space(560))
+
+        // Lyrics, reusing the app window's lyrics page at popup size.
+        Item {
+            id: lyricsView
+            visible: root.view === "lyrics" && root.ready
+            anchors.fill: parent
+
+            QtObject {
+                id: lyricsApp
+                readonly property color accent: Color.accent
+                readonly property var service: root.svc
+            }
+
+            Item {
+                id: lyricsHeader
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: lyricsBack.implicitHeight
+
+                Ui.Button {
+                    id: lyricsBack
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconText: "󰁍"
+                    foreground: root.foreground
+                    tooltipText: "Back to player"
+                    onClicked: root.view = "player"
+                }
+
+                Column {
+                    anchors.left: lyricsBack.right
+                    anchors.leftMargin: Style.space(6)
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Text {
+                        text: "Lyrics"
+                        color: root.foreground
+                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                        font.pixelSize: Style.font.subtitle
+                        font.bold: true
+                    }
+
+                    Text {
+                        width: parent.width
+                        elide: Text.ElideRight
+                        textFormat: Text.PlainText
+                        text: root.player ? root.player.title + (root.player.artist ? " · " + root.player.artist : "") : ""
+                        color: Qt.darker(root.foreground, 1.45)
+                        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                        font.pixelSize: Style.font.caption
+                    }
+                }
+            }
+
+            LyricsPage {
+                anchors.top: lyricsHeader.bottom
+                anchors.topMargin: Style.space(8)
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                radius: Style.spacing.labelGap
+                clip: true
+                app: lyricsApp
+                info: root.svc ? root.svc.trackInfo : null
+                lineSize: Style.font.heading + 4
+                sideMargin: Style.space(16)
+                visible: root.svc !== null
+            }
+        }
 
         QueueView {
             id: queueView
@@ -178,7 +281,7 @@ Ui.BarWidget {
 
         Column {
             id: column
-            visible: !queueView.visible && !libraryView.visible && !collectionView.visible && !devicesView.visible
+            visible: !queueView.visible && !lyricsView.visible && !libraryView.visible && !collectionView.visible && !devicesView.visible
             anchors.fill: parent
             spacing: Style.space(12)
 
@@ -464,12 +567,24 @@ Ui.BarWidget {
                 spacing: Style.space(6)
 
                 Ui.Button {
-                    width: parent.width - queueButton.width - devicesButton.width - appButton.width - parent.spacing * 3
+                    width: parent.width - queueButton.width - devicesButton.width - appButton.width
+                        - (lyricsButton.visible ? lyricsButton.width + parent.spacing : 0) - parent.spacing * 3
                     leftAlign: true
                     iconText: "󰌱"
                     text: "Your Library"
                     foreground: root.foreground
                     onClicked: root.view = "library"
+                }
+
+                Ui.Button {
+                    id: lyricsButton
+                    // Only when this song has lyrics; can be turned off in
+                    // the app's Settings → Bar widget.
+                    visible: root.svc !== null && root.svc.popupLyrics && root.svc.trackInfo.lyricsAvailable
+                    iconText: "󰍬"
+                    foreground: root.foreground
+                    tooltipText: "Lyrics"
+                    onClicked: root.view = "lyrics"
                 }
 
                 Ui.Button {
