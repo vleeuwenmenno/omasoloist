@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import "app"
 
@@ -35,6 +36,47 @@ Item {
     readonly property var page: history[historyIndex]
     // "nowplaying" (Spotify's default), "queue", "devices" or "" (closed).
     property string rightPanel: "nowplaying"
+
+    // ------------------------------------------------ layout, remembered
+    // Sidebar widths (drag the gaps) and the open side panel persist in
+    // ~/.local/state/omasoloist/ui.json.
+    readonly property int defaultLeftWidth: 300
+    readonly property int defaultRightWidth: 360
+    property real leftWidth: defaultLeftWidth
+    property real rightWidth: defaultRightWidth
+    property bool layoutLoaded: false
+
+    function clampLeft(w, bodyWidth) { return Math.max(220, Math.min(w, bodyWidth * 0.4)); }
+    function clampRight(w, bodyWidth) { return Math.max(280, Math.min(w, bodyWidth * 0.45)); }
+
+    function saveLayout() { if (layoutLoaded) saveLayoutTimer.restart(); }
+    onLeftWidthChanged: saveLayout()
+    onRightWidthChanged: saveLayout()
+    onRightPanelChanged: saveLayout()
+
+    Timer {
+        id: saveLayoutTimer
+        interval: 600
+        onTriggered: layoutFile.setText(JSON.stringify({
+            leftWidth: Math.round(root.leftWidth), rightWidth: Math.round(root.rightWidth), rightPanel: root.rightPanel
+        }, null, 2) + "\n")
+    }
+
+    FileView {
+        id: layoutFile
+        path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omasoloist/ui.json"
+        printErrors: false
+        onLoaded: {
+            try {
+                var saved = JSON.parse(text());
+                if (saved.leftWidth > 0) root.leftWidth = saved.leftWidth;
+                if (saved.rightWidth > 0) root.rightWidth = saved.rightWidth;
+                if (typeof saved.rightPanel === "string") root.rightPanel = saved.rightPanel;
+            } catch (e) {}
+            root.layoutLoaded = true;
+        }
+        onLoadFailed: root.layoutLoaded = true
+    }
     // The collection/artist pages keep their last item while hidden so going
     // back doesn't reload them.
     property var lastCollection: null
@@ -544,7 +586,7 @@ Item {
                         anchors.left: parent.left
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
-                        width: Math.max(260, Math.min(360, body.width * 0.24))
+                        width: root.clampLeft(root.leftWidth, body.width)
                         radius: 8
                         color: root.surface
 
@@ -575,7 +617,7 @@ Item {
                         anchors.right: parent.right
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
-                        width: root.rightPanel !== "" ? Math.max(320, Math.min(420, body.width * 0.26)) : 0
+                        width: root.rightPanel !== "" ? root.clampRight(root.rightWidth, body.width) : 0
                         visible: width > 0
                         radius: 8
                         color: root.surface
@@ -611,6 +653,33 @@ Item {
                             soloist: root.service.soloist
                             foreground: root.fg
                         }
+                    }
+
+                    // Drag handles in the gaps beside the sidebars; double-click
+                    // resets the width.
+                    ResizeHandle {
+                        x: sidebar.width
+                        z: 5
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        panelOnLeft: true
+                        currentWidth: sidebar.width
+                        lineColor: root.fg
+                        onResized: function(w) { root.leftWidth = root.clampLeft(w, body.width); }
+                        onResetRequested: root.leftWidth = root.defaultLeftWidth
+                    }
+
+                    ResizeHandle {
+                        visible: side.visible
+                        x: side.x - width
+                        z: 5
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        panelOnLeft: false
+                        currentWidth: side.width
+                        lineColor: root.fg
+                        onResized: function(w) { root.rightWidth = root.clampRight(w, body.width); }
+                        onResetRequested: root.rightWidth = root.defaultRightWidth
                     }
 
                     // Pages
