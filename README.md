@@ -45,6 +45,8 @@ Everything follows your Omarchy theme.
 - Soloist running as a user service with its WebSocket API enabled (step 1
   below)
 - `python3` (standard library only) for the Web API helper
+- `pw-dump` (PipeWire) for the audio signal path and `wl-copy` (wl-clipboard)
+  for "Copy link"; both ship with Omarchy
 - Optional: your own Spotify developer app **Client ID** for library, search,
   likes, devices and queue editing (step 5)
 
@@ -131,6 +133,28 @@ and queue editing use the Spotify Web API, which needs your own developer app:
 
 New apps are in development mode. If Spotify refuses the login, add your
 account's email under **User Management** in the app's dashboard page.
+
+## Remove
+
+```bash
+omarchy plugin remove vleeuwenmenno.omasoloist
+```
+
+That removes the widget and the app window. The plugin leaves a few files of
+its own, which you can delete too:
+
+```bash
+rm -rf ~/.config/omasoloist ~/.local/state/omasoloist ~/.cache/omasoloist
+```
+
+- `~/.config/omasoloist/config.json`: your Spotify app Client ID
+- `~/.local/state/omasoloist/`: Spotify sign-in tokens and window layout
+- `~/.cache/omasoloist/`: cached API answers, artwork and lyrics
+
+If you added the Hyprland float rule, remove its line from
+`~/.config/hypr/windows.lua`. Soloist itself is separate; if you installed it
+with the script, `scripts/install-soloist.sh --uninstall` removes the service
+and binary (it keeps your API key and Soloist's data directory).
 
 ## Configuration
 
@@ -230,6 +254,20 @@ Besides Spotify itself, the plugin talks to:
   read from Spotify's public artist page.
 
 Your Spotify tokens stay on your machine in `~/.local/state/omasoloist/`.
+
+## What the plugin runs
+
+- `soloist ctl` to control and follow the Soloist daemon.
+- `systemctl --user start|stop` on the Soloist unit, only when you press
+  **Start Soloist** or **Save and restart Soloist** in Settings (the latter
+  writes Spotify's audio preferences to Soloist's prefs file while it's
+  stopped).
+- `bin/spotify.py` (Python, standard library) for Web API calls, lyrics,
+  artist info and the quality estimate; it reads `/proc/<soloist pid>/fd` to
+  find the playing cache file and runs `pw-dump`.
+- It edits only its own entry in `~/.config/omarchy/shell.json`, when you
+  change a setting in Settings → Bar widget. No sudo, nothing outside your
+  home directory.
 
 ## Development
 
