@@ -249,52 +249,6 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         spacing: 8
 
-        // "Now playing view": drawn, a panel with its right column filled.
-        Item {
-            id: nowPlayingButton
-            readonly property bool active: root.app.rightPanel === "nowplaying"
-            readonly property color tone: active ? root.app.accent : npMouse.containsMouse ? root.app.fg : root.app.dim
-            width: 32
-            height: 32
-
-            Rectangle {
-                anchors.centerIn: parent
-                width: 18
-                height: 16
-                radius: 3
-                color: "transparent"
-                border.width: 2
-                border.color: nowPlayingButton.tone
-
-                Rectangle {
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    width: 7
-                    radius: 2
-                    color: nowPlayingButton.tone
-                }
-            }
-
-            Rectangle {
-                visible: nowPlayingButton.active
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
-                width: 4
-                height: 4
-                radius: 2
-                color: root.app.accent
-            }
-
-            MouseArea {
-                id: npMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.app.toggleRightPanel("nowplaying")
-            }
-        }
-
         IconButton {
             text: "󰍬"
             active: root.app.page.kind === "lyrics"

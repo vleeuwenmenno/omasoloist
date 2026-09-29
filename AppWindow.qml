@@ -695,6 +695,49 @@ Item {
                         clip: true
                         color: root.surface
 
+                        // Floating "Now playing view" toggle in the corner of the
+                        // page area (drawn: a panel with its right column filled).
+                        Rectangle {
+                            id: nowPlayingToggle
+                            readonly property bool active: root.rightPanel === "nowplaying"
+                            readonly property color tone: active ? root.accent : npToggleMouse.containsMouse ? root.fg : root.dim
+                            z: 10
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.margins: 12
+                            width: 36
+                            height: 36
+                            radius: 18
+                            color: Qt.rgba(root.bg.r, root.bg.g, root.bg.b, npToggleMouse.containsMouse ? 0.85 : 0.6)
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 18
+                                height: 16
+                                radius: 3
+                                color: "transparent"
+                                border.width: 2
+                                border.color: nowPlayingToggle.tone
+
+                                Rectangle {
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.bottom: parent.bottom
+                                    width: 7
+                                    radius: 2
+                                    color: nowPlayingToggle.tone
+                                }
+                            }
+
+                            MouseArea {
+                                id: npToggleMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.toggleRightPanel("nowplaying")
+                            }
+                        }
+
                         HomePage {
                             anchors.fill: parent
                             visible: root.page.kind === "home"
