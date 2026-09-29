@@ -174,9 +174,14 @@ Ui.BarWidget {
             visible: root.view === "lyrics" && root.ready
             anchors.fill: parent
 
+            // What the reused app-window components (LyricsPage,
+            // QualityCard) expect from `app`.
             QtObject {
-                id: lyricsApp
+                id: popupApp
                 readonly property color accent: Color.accent
+                readonly property color fg: root.foreground
+                readonly property color dim: Qt.darker(root.foreground, 1.45)
+                readonly property color bg: Color.background
                 readonly property var service: root.svc
             }
 
@@ -230,11 +235,70 @@ Ui.BarWidget {
                 anchors.bottom: parent.bottom
                 radius: Style.spacing.labelGap
                 clip: true
-                app: lyricsApp
+                app: popupApp
                 info: root.svc ? root.svc.trackInfo : null
                 lineSize: Style.font.heading + 4
                 sideMargin: Style.space(16)
                 visible: root.svc !== null
+            }
+        }
+
+        // Sound quality: the app window's File quality card.
+        Item {
+            id: qualityView
+            visible: root.view === "quality" && root.ready
+            anchors.fill: parent
+
+            Item {
+                id: qualityHeader
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: qualityBack.implicitHeight
+
+                Ui.Button {
+                    id: qualityBack
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconText: "󰁍"
+                    foreground: root.foreground
+                    tooltipText: "Back to player"
+                    onClicked: root.view = "player"
+                }
+
+                Text {
+                    anchors.left: qualityBack.right
+                    anchors.leftMargin: Style.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Sound quality"
+                    color: root.foreground
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.subtitle
+                    font.bold: true
+                }
+            }
+
+            Flickable {
+                anchors.top: qualityHeader.bottom
+                anchors.topMargin: Style.space(8)
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                clip: true
+                contentHeight: qualityCard.implicitHeight
+                boundsBehavior: Flickable.StopAtBounds
+
+                QualityCard {
+                    id: qualityCard
+                    width: parent.width
+                    padding: Style.space(4)
+                    innerWidth: width - Style.space(8)
+                    app: popupApp
+                    active: qualityView.visible && root.popupOpen
+                    onSettingsRequested: {
+                        root.close();
+                        root.svc.openApp("settings");
+                    }
+                }
             }
         }
 
@@ -292,7 +356,7 @@ Ui.BarWidget {
 
         Column {
             id: column
-            visible: !queueView.visible && !lyricsView.visible && !libraryView.visible && !collectionView.visible && !devicesView.visible
+            visible: !queueView.visible && !lyricsView.visible && !qualityView.visible && !libraryView.visible && !collectionView.visible && !devicesView.visible
             anchors.fill: parent
             spacing: Style.space(12)
 
@@ -332,7 +396,7 @@ Ui.BarWidget {
                     visible: root.showsCoverLyrics
                     radius: Style.spacing.labelGap
                     clip: true
-                    app: lyricsApp
+                    app: popupApp
                     info: root.svc ? root.svc.trackInfo : null
                     lineSize: Style.font.heading + 2
                     sideMargin: Style.space(14)
@@ -425,6 +489,17 @@ Ui.BarWidget {
                         color: visible && root.svc.quality.lossless ? Color.accent : Qt.darker(root.foreground, 1.45)
                         font.family: root.bar.fontFamily
                         font.pixelSize: Style.font.caption
+                        font.underline: popupQualityMouse.containsMouse
+
+                        // Opens the Sound quality view (tier and signal path).
+                        MouseArea {
+                            id: popupQualityMouse
+                            anchors.fill: parent
+                            anchors.margins: -2
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.view = "quality"
+                        }
                     }
 
                     Text {
