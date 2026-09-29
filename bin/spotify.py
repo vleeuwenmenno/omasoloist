@@ -89,15 +89,52 @@ def client_id():
     return value
 
 
+# ------------------------------------------------------------ bounded reads
+#
+# Every network response is read through read_limited, so an oversized or
+# endless response fails instead of exhausting memory.
+
+KIB, MIB = 1024, 1024 * 1024
+LIMIT_TOKEN = 64 * KIB         # OAuth token responses
+LIMIT_API = 8 * MIB            # Spotify Web API JSON (largest pages are ~100-300 KiB)
+LIMIT_PUBLIC_JSON = 1 * MIB    # LRCLIB, Wikipedia, GitHub tags
+LIMIT_PAGE = 4 * MIB           # public open.spotify.com pages (~200-350 KiB)
+LIMIT_IMAGE = 2 * MIB          # artwork (Spotify covers are ~20-300 KiB)
+LIMIT_ERROR = 64 * KIB         # error bodies
+MAX_IMAGE_SIDE = 4096          # pixels, either dimension
+
+
+def read_limited(response, limit, what="Response"):
+    length = response.headers.get("Content-Length")
+    if length and length.isdigit() and int(length) > limit:
+        raise HelperError(f"{what} is too large ({int(length) // KIB} KiB, limit {limit // KIB} KiB)")
+    chunks, total = [], 0
+    while True:
+        chunk = response.read(min(64 * KIB, limit + 1 - total))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > limit:
+            raise HelperError(f"{what} is larger than the {limit // KIB} KiB limit")
+    return b"".join(chunks)
+
+
+def read_error_body(error):
+    try:
+        return error.read(LIMIT_ERROR).decode(errors="replace")
+    except OSError:
+        return ""
+
+
 def post_form(url, fields):
     body = urllib.parse.urlencode(fields).encode()
     request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
-            return json.load(response)
+            return json.loads(read_limited(response, LIMIT_TOKEN, "Token response"))
     except urllib.error.HTTPError as error:
-        detail = error.read().decode(errors="replace")
-        raise HelperError(f"Token request failed ({error.code}): {detail}") from None
+        raise HelperError(f"Token request failed ({error.code}): {read_error_body(error)}") from None
     except urllib.error.URLError as error:
         raise HelperError(f"Could not reach Spotify: {error.reason}") from None
 
@@ -210,7 +247,7 @@ def api_request(method, path, url, params, body, retry):
     request = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
-            raw = response.read()
+            raw = read_limited(response, LIMIT_API, "Spotify API response")
             # Player commands answer with an opaque text token, not JSON.
             try:
                 return json.loads(raw) if raw else {}
@@ -220,7 +257,7 @@ def api_request(method, path, url, params, body, retry):
         if error.code == 429 and retry:
             time.sleep(min(int(error.headers.get("Retry-After", "1")), 5))
             return api_request(method, path, url, params, body, retry=False)
-        detail = error.read().decode(errors="replace")
+        detail = read_error_body(error)
         try:
             detail = json.loads(detail)["error"]["message"]
         except (ValueError, KeyError, TypeError):
@@ -241,14 +278,65 @@ IMAGE_QUEUE = []
 IMAGE_MAX_AGE = 60 * 86400
 
 
+def image_size(data):
+    """(format, width, height) from a JPEG, PNG or WebP header, else None.
+
+    Only these formats are cached; the dimensions gate what QML decodes.
+    """
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
+        return "png", int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        kind = data[12:16]
+        if kind == b"VP8 " and len(data) >= 30:
+            return "webp", int.from_bytes(data[26:28], "little") & 0x3FFF, int.from_bytes(data[28:30], "little") & 0x3FFF
+        if kind == b"VP8L" and len(data) >= 25:
+            bits = int.from_bytes(data[21:25], "little")
+            return "webp", (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+        if kind == b"VP8X" and len(data) >= 30:
+            return "webp", int.from_bytes(data[24:27], "little") + 1, int.from_bytes(data[27:30], "little") + 1
+        return None
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                return None
+            marker = data[i + 1]
+            if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            length = int.from_bytes(data[i + 2:i + 4], "big")
+            # SOF markers carry the frame size.
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                return "jpeg", int.from_bytes(data[i + 7:i + 9], "big"), int.from_bytes(data[i + 5:i + 7], "big")
+            i += 2 + length
+    return None
+
+
+def acceptable_image(data):
+    info = image_size(data)
+    return bool(info) and 0 < info[1] <= MAX_IMAGE_SIDE and 0 < info[2] <= MAX_IMAGE_SIDE
+
+
+# Until an image is cached, QML may load it directly, but only from
+# Spotify's image CDNs; anything else waits for the validated cache copy.
+DIRECT_IMAGE_HOSTS = ("i.scdn.co", "mosaic.scdn.co", "pickasso.spotifycdn.com",
+                      "image-cdn-ak.spotifycdn.com", "image-cdn-fa.spotifycdn.com")
+
+
 def local_image(url):
     if not url or not url.startswith("https://"):
-        return url
+        return ""
     path = os.path.join(IMAGE_DIR, hashlib.sha1(url.encode()).hexdigest())
-    if os.path.exists(path):
-        return "file://" + path
+    try:
+        # Files are only cached after validation; the size check also
+        # covers files cached before validation existed.
+        if os.path.getsize(path) <= LIMIT_IMAGE:
+            return "file://" + path
+        os.remove(path)
+    except OSError:
+        pass
     IMAGE_QUEUE.append(url)
-    return url
+    return url if urllib.parse.urlparse(url).hostname in DIRECT_IMAGE_HOSTS else ""
 
 
 def pick_image(images, preferred=300):
@@ -276,8 +364,12 @@ def cmd_fetch_images(args):
         try:
             request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(request, timeout=20) as response:
-                data = response.read()
-        except (urllib.error.URLError, OSError):
+                data = read_limited(response, LIMIT_IMAGE, "Artwork")
+        except (urllib.error.URLError, OSError, HelperError):
+            continue
+        # Cache only real JPEG/PNG/WebP within MAX_IMAGE_SIDE; anything else
+        # stays uncached (QML then loads the CDN URL with its own size cap).
+        if not acceptable_image(data):
             continue
         with open(path + ".tmp", "wb") as handle:
             handle.write(data)
@@ -800,7 +892,7 @@ def public_page_entity(kind, ident):
                                          headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)",
                                                   "Accept-Language": "en"})
         with urllib.request.urlopen(request, timeout=15) as response:
-            html = response.read().decode("utf-8", errors="replace")
+            html = read_limited(response, LIMIT_PAGE, "Spotify page").decode("utf-8", errors="replace")
         start = html.index(">", html.index('id="initialState"')) + 1
         state = json.loads(base64.b64decode(html[start:html.index("<", start)]))
         return state["entities"]["items"][f"spotify:{kind}:{ident}"]
@@ -1209,7 +1301,7 @@ def get_public_json(url, retry=True):
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
-            return json.load(response)
+            return json.loads(read_limited(response, LIMIT_PUBLIC_JSON, urllib.parse.urlparse(url).netloc + " response"))
     except urllib.error.HTTPError as error:
         if error.code == 404:
             return None
