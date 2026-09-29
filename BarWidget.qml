@@ -393,6 +393,16 @@ Ui.BarWidget {
                         }
                     }
 
+                    // File quality of the playing song ("Lossless" like Spotify).
+                    Text {
+                        visible: root.svc !== null && root.svc.quality !== null
+                        textFormat: Text.PlainText
+                        text: visible ? (root.svc.quality.lossless ? "Lossless" : root.svc.quality.label + " quality") : ""
+                        color: visible && root.svc.quality.lossless ? Color.accent : Qt.darker(root.foreground, 1.45)
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
+
                     Text {
                         width: parent.width
                         elide: Text.ElideRight

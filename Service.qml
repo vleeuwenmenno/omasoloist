@@ -118,6 +118,42 @@ Item {
         currentUri: root.player && root.player.item ? root.player.item.uri || "" : ""
     }
 
+    // ------------------------------------------------------------ quality
+    // Estimated file quality of what Soloist plays ("Lossless 16-bit"),
+    // measured once per track (bin/spotify.py quality). Unknown for remote
+    // devices.
+    property var qualityByUri: ({})
+    property int qualityTries: 0
+    readonly property string qualityUri: !remoteActive && soloist.item ? soloist.item.uri || "" : ""
+    readonly property var quality: qualityUri !== "" ? qualityByUri[qualityUri] || null : null
+
+    onQualityUriChanged: {
+        qualityTries = 0;
+        qualityTimer.interval = 2500;
+        if (qualityUri !== "" && !qualityByUri[qualityUri]) qualityTimer.restart();
+    }
+
+    Timer {
+        id: qualityTimer
+        // Give Soloist a moment to open the new file.
+        interval: 2500
+        onTriggered: {
+            var uri = root.qualityUri;
+            if (uri === "" || root.soloist.durationMs <= 0) { if (root.qualityTries++ < 5) restart(); return; }
+            spotifyApi.call(["quality", root.soloist.resolvedDataDir, String(Math.round(root.soloist.durationMs))], function(result) {
+                if (uri !== root.qualityUri) return;
+                if (result.ok && result.found) {
+                    var next = Object.assign({}, root.qualityByUri);
+                    next[uri] = result;
+                    root.qualityByUri = next;
+                } else if (root.qualityTries++ < 5) {
+                    qualityTimer.interval = 5000;
+                    qualityTimer.restart();
+                }
+            });
+        }
+    }
+
     // Catch likes made in other Spotify apps.
     Timer {
         interval: 30000

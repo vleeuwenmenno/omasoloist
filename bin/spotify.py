@@ -1220,6 +1220,158 @@ def cmd_artist_about(args):
     return {"artist": artist, **about}
 
 
+# ------------------------------------------------------------ file quality
+#
+# Soloist doesn't report which audio file it streams. Its cache files are
+# encrypted, but their size is the full file size from the start, and
+# Soloist keeps the playing file open. Size / duration gives the average
+# bitrate, which separates Spotify's tiers cleanly: Ogg Vorbis tops out at
+# 320 kbit/s, 16-bit FLAC averages ~600-1400, 24-bit FLAC more.
+
+QUALITY_TIERS = [
+    # (max average kbit/s, tier id, label, format line, data per hour)
+    (60, "low", "Low", "24 kbit/s • Ogg Vorbis", "About 0.01 GB/hour"),
+    (130, "normal", "Normal", "96 kbit/s • Ogg Vorbis", "About 0.04 GB/hour"),
+    (240, "high", "High", "160 kbit/s • Ogg Vorbis", "About 0.07 GB/hour"),
+    (480, "very_high", "Very high", "320 kbit/s • Ogg Vorbis", "About 0.15 GB/hour"),
+    (1600, "lossless", "Lossless 16-bit", "Up to 16-bit/44.1 kHz • FLAC", "Up to 0.7 GB/hour"),
+    (10 ** 9, "lossless24", "Lossless 24-bit", "Up to 24-bit/44.1 kHz • FLAC", "Up to 1 GB/hour"),
+]
+
+
+def soloist_open_audio_files(data_dir):
+    try:
+        with open(os.path.join(data_dir, "soloist.pid"), encoding="utf-8") as handle:
+            pid = handle.read().strip()
+        fd_dir = f"/proc/{pid}/fd"
+        targets = [os.readlink(os.path.join(fd_dir, fd)) for fd in os.listdir(fd_dir)]
+    except OSError:
+        return []
+    return sorted({t for t in targets if t.endswith(".file") and "/soloist/" in t})
+
+
+def cmd_quality(args):
+    """quality <data dir> <duration ms>: estimated quality of the playing file."""
+    if len(args) < 2:
+        raise HelperError("Usage: quality <data dir> <duration ms>")
+    duration = int(args[1]) / 1000
+    files = soloist_open_audio_files(args[0])
+    if not files or duration <= 0:
+        return {"found": False}
+    # Normally only the playing file is open. With two (the next track
+    # preloading) we can't tell which is which; the widget asks again later.
+    if len(files) > 1:
+        return {"found": False, "ambiguous": True}
+    size = os.path.getsize(files[0])
+    kbps = size * 8 / duration / 1000
+    for limit, tier, label, fmt, per_hour in QUALITY_TIERS:
+        if kbps < limit:
+            break
+    return {"found": True, "tier": tier, "label": label, "format": fmt, "perHour": per_hour,
+            "lossless": tier.startswith("lossless"), "kbps": round(kbps), "bytes": size}
+
+
+# ----------------------------------------------------------- audio path
+#
+# What happens after Soloist decodes: its PipeWire stream format and the
+# device it plays on (rate, sample format, Bluetooth codec), from pw-dump.
+
+SAMPLE_BITS = {"S16": 16, "S24": 24, "S24_32": 24, "S32": 32, "F32": 32, "F64": 64, "U8": 8}
+BLUETOOTH_CODECS = {
+    "sbc": "SBC", "sbc_xq": "SBC-XQ", "aac": "AAC", "aac_eld": "AAC-ELD", "aptx": "aptX",
+    "aptx_hd": "aptX HD", "aptx_ll": "aptX LL", "ldac": "LDAC", "lc3": "LC3", "lc3plus_h3": "LC3plus",
+    "opus_05": "Opus", "opus_g": "Opus", "faststream": "FastStream", "msbc": "mSBC", "cvsd": "CVSD",
+}
+
+
+def sample_format(fmt):
+    """("F32LE" -> ("32-bit float", 32)), ("S16LE" -> ("16-bit", 16))."""
+    base = (fmt or "").upper().rstrip("P")
+    for suffix in ("LE", "BE"):
+        if base.endswith(suffix):
+            base = base[:-2]
+    bits = SAMPLE_BITS.get(base, 0)
+    if not bits:
+        return fmt or "", 0
+    return (f"{bits}-bit float" if base.startswith("F") else f"{bits}-bit"), bits
+
+
+def cmd_audio_path(args):
+    """audio-path [data dir]: Soloist's PipeWire stream and output device."""
+    data_dir = args[0] if args else os.path.join(HOME, ".local", "share", "soloist")
+    try:
+        dump = json.loads(run_quiet(["pw-dump"]).stdout or "[]")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {"found": False, "error": "pw-dump is not available"}
+    by_id = {o.get("id"): o for o in dump}
+    try:
+        with open(os.path.join(data_dir, "soloist.pid"), encoding="utf-8") as handle:
+            soloist_pid = handle.read().strip()
+    except OSError:
+        soloist_pid = ""
+
+    def props(obj):
+        return ((obj or {}).get("info") or {}).get("props") or {}
+
+    def fmt_of(obj):
+        formats = (((obj or {}).get("info") or {}).get("params") or {}).get("Format") or []
+        return formats[0] if formats else {}
+
+    # Soloist's stream: the output stream whose client is the Soloist process
+    # (it names itself "spotify"/"Spotify").
+    stream = None
+    for obj in dump:
+        p = props(obj)
+        if obj.get("type") != "PipeWire:Interface:Node" or not p.get("media.class", "").startswith("Stream/Output/Audio"):
+            continue
+        client = props(by_id.get(p.get("client.id")))
+        if soloist_pid and str(client.get("application.process.id", "")) == soloist_pid:
+            stream = obj
+            break
+        if stream is None and p.get("node.name") == "spotify":
+            stream = obj
+    if stream is None:
+        return {"found": False}
+
+    f = fmt_of(stream)
+    fmt_label, bits = sample_format(f.get("format"))
+    rate, channels = int(f.get("rate") or 0), int(f.get("channels") or 0)
+    result = {"found": True, "stream": {
+        "rate": rate, "channels": channels, "format": fmt_label,
+        "pcmKbps": round(rate * bits * channels / 1000) if bits else 0}}
+
+    # Follow links to the first Audio/Sink (through filters, if any).
+    seen, frontier, sink = set(), [stream.get("id")], None
+    while frontier and sink is None:
+        node_id = frontier.pop(0)
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        for obj in dump:
+            info = obj.get("info") or {}
+            if obj.get("type") == "PipeWire:Interface:Link" and info.get("output-node-id") == node_id:
+                target = by_id.get(info.get("input-node-id"))
+                if "Audio/Sink" in props(target).get("media.class", ""):
+                    sink = target
+                    break
+                frontier.append(info.get("input-node-id"))
+    if sink is not None:
+        p = props(sink)
+        sf = fmt_of(sink)
+        sink_fmt, _ = sample_format(sf.get("format"))
+        bluetooth = p.get("device.api") == "bluez5"
+        codec = p.get("api.bluez5.codec", "")
+        result["output"] = {
+            "name": p.get("node.description") or p.get("node.nick") or p.get("node.name", ""),
+            "kind": "Bluetooth" if bluetooth else "HDMI" if "hdmi" in p.get("node.name", "") else
+                    "USB" if "usb" in p.get("node.name", "") else "Speakers/headphones",
+            "bluetooth": bluetooth,
+            "codec": BLUETOOTH_CODECS.get(codec, codec.upper()) if bluetooth else "",
+            "rate": int(sf.get("rate") or 0), "format": sink_fmt,
+        }
+    return result
+
+
 COMMANDS = {
     "status": cmd_status,
     "set-client-id": cmd_set_client_id,
@@ -1240,6 +1392,8 @@ COMMANDS = {
     "home": cmd_home,
     "artist": cmd_artist,
     "profile": cmd_profile,
+    "quality": cmd_quality,
+    "audio-path": cmd_audio_path,
     "lyrics": cmd_lyrics,
     "liked-contains": cmd_liked_contains,
     "like": cmd_like,

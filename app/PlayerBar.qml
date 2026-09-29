@@ -18,6 +18,12 @@ Item {
 
     implicitHeight: 88
 
+    QualityPopover {
+        id: qualityPopover
+        app: root.app
+        parent: root.parent
+    }
+
     component IconButton: Text {
         id: icon
         property bool active: false
@@ -112,6 +118,31 @@ Item {
                     hoverEnabled: true
                     cursorShape: root.app.service.artistUri() !== "" ? Qt.PointingHandCursor : Qt.ArrowCursor
                     onClicked: root.app.openPlayingArtist()
+                }
+            }
+
+            // File quality ("Lossless" like Spotify); opens the details card.
+            Text {
+                id: qualityLabel
+                visible: root.app.service.quality !== null
+                text: root.app.service.quality ? (root.app.service.quality.lossless ? "Lossless" : root.app.service.quality.label) : ""
+                color: root.app.service.quality && root.app.service.quality.lossless ? root.app.accent : root.app.dim
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.underline: qualityMouse.containsMouse
+
+                MouseArea {
+                    id: qualityMouse
+                    anchors.fill: parent
+                    anchors.margins: -2
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        var p = qualityLabel.mapToItem(qualityPopover.parent, 0, 0);
+                        qualityPopover.x = p.x - 12;
+                        qualityPopover.anchorBottom = p.y - 12;
+                        qualityPopover.open();
+                    }
                 }
             }
         }
