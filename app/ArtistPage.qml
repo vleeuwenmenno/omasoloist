@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Effects
 import QtQuick.Controls as Controls
 import qs.Commons
 
@@ -20,11 +21,12 @@ Flickable {
     property string error: ""
     property string pendingUri: ""
     property bool showAllPopular: false
+    property int revision: 0
 
     readonly property var player: app.service.player
     readonly property bool playingThis: artist !== null && player.context && player.context.uri === artist.uri
     readonly property var info: artistData ? artistData.artist : artist
-    readonly property string heroImage: info && info.cover ? info.cover : ""
+    readonly property string heroImage: info ? info.hero || info.cover || "" : ""
     readonly property bool canFollow: app.service.api.missingScopes.indexOf("user-follow-modify") < 0
     readonly property bool following: artist !== null && app.service.likes.isLiked(artist.uri)
 
@@ -32,21 +34,32 @@ Flickable {
         return Number(n || 0).toLocaleString(Qt.locale("en_US"), "f", 0);
     }
 
-    onArtistChanged: {
+    function load() {
+        revision++;
+        loading = false;
         artistData = null;
         error = "";
         showAllPopular = false;
         contentY = 0;
-        if (!artist) return;
+        if (!artist || !app.service.api.signedIn) return;
         loading = true;
+        var requestedRevision = revision;
         var requested = artist;
         app.service.likes.query([artist.uri]);
         app.service.api.call(["artist", artist.id], function(result) {
-            if (requested !== root.artist) return;
+            if (requestedRevision !== root.revision || requested !== root.artist) return;
             root.loading = false;
             if (!result.ok) { root.error = result.error; return; }
             root.artistData = result;
         });
+    }
+    onArtistChanged: load()
+
+    Connections {
+        target: root.app.service.api
+        function onSessionReset() { root.load(); }
+        function onSignedInChanged() { if (root.app.service.api.signedIn) root.load(); }
+        function onCacheCleared(group) { if (group !== "lyrics") root.load(); }
     }
 
     onArtistDataChanged: if (artistData)
@@ -78,8 +91,12 @@ Flickable {
         id: content
         width: root.width
 
-        // Hero: the artist photo, darkened towards the bottom.
+        // Hero: Spotify's wide header image isn't available to third-party
+        // apps (the Web API and public page only have the square photo), so
+        // the photo is shown whole in the middle, its edges fading into a
+        // blurred copy that fills the width.
         Item {
+            id: hero
             width: parent.width
             height: Math.max(300, Math.min(420, root.width * 0.42))
             clip: true
@@ -90,12 +107,56 @@ Flickable {
             }
 
             Image {
+                id: heroBackdrop
                 anchors.fill: parent
                 fillMode: Image.PreserveAspectCrop
-                verticalAlignment: Image.AlignTop
                 asynchronous: true
                 source: root.heroImage
-                sourceSize.width: 1280
+                sourceSize.width: 320
+                visible: false
+            }
+
+            MultiEffect {
+                anchors.fill: parent
+                source: heroBackdrop
+                visible: heroBackdrop.status === Image.Ready
+                blurEnabled: true
+                blur: 1.0
+                blurMax: 64
+                brightness: -0.25
+                saturation: 0.1
+            }
+
+            Image {
+                id: heroPhoto
+                anchors.horizontalCenter: parent.horizontalCenter
+                height: parent.height
+                width: Math.min(parent.width, height)
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                source: root.heroImage
+                sourceSize.width: 1000
+                layer.enabled: true
+                layer.effect: MultiEffect {
+                    maskEnabled: true
+                    maskSource: heroFade
+                }
+            }
+
+            // Soft left and right edges for the photo.
+            Rectangle {
+                id: heroFade
+                width: heroPhoto.width
+                height: heroPhoto.height
+                visible: false
+                layer.enabled: true
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0; color: "transparent" }
+                    GradientStop { position: 0.18; color: "white" }
+                    GradientStop { position: 0.82; color: "white" }
+                    GradientStop { position: 1; color: "transparent" }
+                }
             }
 
             Rectangle {

@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import qs.Commons
 import "app"
 
@@ -9,7 +10,8 @@ import "app"
 // theme tokens, so switching themes restyles it like every shell surface.
 //
 // Summon: omarchy-shell shell summon vleeuwenmenno.omasoloist '{"page":"settings"}'
-// Hyprland floats it through a rule on class org.quickshell, title "Soloist".
+// It floats itself when it opens (Settings > App window turns that off), so
+// no Hyprland window rule is needed.
 Item {
     id: root
 
@@ -25,6 +27,8 @@ Item {
     readonly property color bg: Color.background
     readonly property color fg: Color.foreground
     readonly property color accent: Color.accent
+    // Omarchy themes have no warning colour; orange reads as "degraded" on all of them.
+    readonly property color warning: "#e8a33d"
     readonly property color dim: Qt.rgba(fg.r, fg.g, fg.b, 0.6)
     readonly property color surface: Qt.rgba(fg.r, fg.g, fg.b, 0.045)
     readonly property color surfaceHover: Qt.rgba(fg.r, fg.g, fg.b, 0.09)
@@ -45,6 +49,8 @@ Item {
     property real leftWidth: defaultLeftWidth
     property real rightWidth: defaultRightWidth
     property bool layoutLoaded: false
+    // Float, size and center the window each time it opens.
+    property bool floatWindow: true
 
     function clampLeft(w, bodyWidth) { return Math.max(220, Math.min(w, bodyWidth * 0.4)); }
     function clampRight(w, bodyWidth) { return Math.max(280, Math.min(w, bodyWidth * 0.45)); }
@@ -53,12 +59,14 @@ Item {
     onLeftWidthChanged: saveLayout()
     onRightWidthChanged: saveLayout()
     onRightPanelChanged: saveLayout()
+    onFloatWindowChanged: saveLayout()
 
     Timer {
         id: saveLayoutTimer
         interval: 600
         onTriggered: layoutFile.setText(JSON.stringify({
-            leftWidth: Math.round(root.leftWidth), rightWidth: Math.round(root.rightWidth), rightPanel: root.rightPanel
+            leftWidth: Math.round(root.leftWidth), rightWidth: Math.round(root.rightWidth), rightPanel: root.rightPanel,
+            floatWindow: root.floatWindow
         }, null, 2) + "\n")
     }
 
@@ -72,6 +80,7 @@ Item {
                 if (saved.leftWidth > 0) root.leftWidth = saved.leftWidth;
                 if (saved.rightWidth > 0) root.rightWidth = saved.rightWidth;
                 if (typeof saved.rightPanel === "string") root.rightPanel = saved.rightPanel;
+                if (saved.floatWindow === false) root.floatWindow = false;
             } catch (e) {}
             root.layoutLoaded = true;
         }
@@ -81,6 +90,7 @@ Item {
     // back doesn't reload them.
     property var lastCollection: null
     property var lastArtist: null
+    property var lastShelf: null
     property string lastHighlight: ""
     onPageChanged: {
         if (page.kind === "collection") {
@@ -88,6 +98,7 @@ Item {
             lastCollection = page.item;
         }
         else if (page.kind === "artist") lastArtist = page.item;
+        else if (page.kind === "shelf") lastShelf = page.item;
     }
 
     function navigate(next) {
@@ -262,6 +273,7 @@ Item {
     Connections {
         target: root.service ? root.service.api : null
         function onSignedInChanged() { if (root.service.api.signedIn) root.loadMe(); else root.me = null; }
+        function onCacheCleared(group) { if (group === "api" || group === "all" || group === "images") root.loadMe(); }
     }
 
     // Spotify's avatar menu, minus what the public API can't do (private
@@ -272,7 +284,7 @@ Item {
             { header: me ? me.name : "Spotify" },
             { label: "Account", icon: "󰀄", external: true, action: web("https://www.spotify.com/account/overview/") },
             { label: "Profile", icon: "󰋜", action: function() { root.navigate({ kind: "profile" }); } },
-            { label: "Recents", icon: "󰋚", action: function() { root.navigate({ kind: "home" }); } },
+            { label: "Recents", icon: "󰋚", action: function() { root.navigate({ kind: "history" }); } },
             { label: "Support", icon: "󰋖", external: true, action: web("https://support.spotify.com/") },
             { separator: true },
             { label: "Settings", icon: "󰒓", action: function() { root.navigate({ kind: "settings" }); } },
@@ -333,6 +345,7 @@ Item {
         try { payload = JSON.parse(String(payloadJson || "{}")) || {}; } catch (e) {}
         if (payload.page === "settings") navigate({ kind: "settings" });
         else if (payload.page === "search") navigate({ kind: "search" });
+        else if (payload.page === "history") navigate({ kind: "history" });
         else if (payload.uri) openUri(payload.uri, payload.name || "", payload.highlight || "");
     }
 
@@ -378,6 +391,30 @@ Item {
     function toggleLyrics() {
         if (page.kind === "lyrics") back();
         else navigate({ kind: "lyrics" });
+    }
+
+    // Hiding the window unmaps it, so Hyprland tiles it again on every open.
+    // openwindow carries "address,workspace,class,title".
+    Connections {
+        target: Hyprland
+        enabled: root.floatWindow
+        function onRawEvent(event) {
+            if (!event || event.name !== "openwindow") return;
+            var fields = String(event.data).split(",");
+            if (fields.length < 4 || fields[2] !== "org.quickshell" || fields.slice(3).join(",") !== window.title) return;
+            var address = "address:0x" + fields[0].replace(/^0x/, "");
+            var w = window.implicitWidth, h = window.implicitHeight;
+            if (Hyprland.usingLua) {
+                var sel = '{ window = "' + address + '"';
+                Hyprland.dispatch("hl.dsp.window.float(" + sel + ', action = "enable" })');
+                Hyprland.dispatch("hl.dsp.window.resize(" + sel + ", x = " + w + ", y = " + h + " })");
+                Hyprland.dispatch("hl.dsp.window.center(" + sel + " })");
+            } else {
+                Hyprland.dispatch("setfloating " + address);
+                Hyprland.dispatch("resizewindowpixel exact " + w + " " + h + "," + address);
+                Hyprland.dispatch("centerwindow");
+            }
+        }
     }
 
     FloatingWindow {
@@ -510,8 +547,33 @@ Item {
                             }
                         }
 
+                        // Listening history (Spotify's Recents page).
                         Rectangle {
-                            width: Math.min(480, topBar.width - 520)
+                            visible: root.service.api.signedIn
+                            width: 48
+                            height: 48
+                            radius: 24
+                            color: historyMouse.containsMouse ? root.surfaceHover : root.surface
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "󰋚"
+                                color: root.page.kind === "history" ? root.fg : root.dim
+                                font.family: Style.font.family
+                                font.pixelSize: 22
+                            }
+
+                            MouseArea {
+                                id: historyMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.navigate({ kind: "history" })
+                            }
+                        }
+
+                        Rectangle {
+                            width: Math.min(480, topBar.width - 576)
                             height: 48
                             radius: 24
                             color: search.activeFocus || searchMouse.containsMouse ? root.surfaceHover : root.surface
@@ -635,6 +697,49 @@ Item {
                                     { label: "What's new", icon: "󰋼", external: true,
                                       action: function() { Qt.openUrlExternally(root.service.releasesUrl); } }
                                 ], updatePill, updatePill.width - 280, updatePill.height + 8)
+                            }
+                        }
+
+                        // Spotify is holding some endpoints back: a short explanation.
+                        Rectangle {
+                            id: limitBadge
+                            readonly property var limits: root.service.api.limits
+                            visible: limits.length > 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 30
+                            height: 30
+                            radius: 15
+                            color: Qt.rgba(root.warning.r, root.warning.g, root.warning.b, limitMouse.containsMouse ? 0.3 : 0.18)
+                            border.width: 1
+                            border.color: root.warning
+
+                            Text {
+                                anchors.centerIn: parent
+                                text: "?"
+                                color: root.warning
+                                font.family: Style.font.family
+                                font.pixelSize: 16
+                                font.bold: true
+                            }
+
+                            MouseArea {
+                                id: limitMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    var minutes = Math.max(1, Math.round(root.service.api.limitSeconds / 60));
+                                    var wait = minutes >= 60 ? Math.floor(minutes / 60) + " h " + (minutes % 60) + " min" : minutes + " min";
+                                    var names = limitBadge.limits.map(function(l) { return l.label; });
+                                    root.showEntries([
+                                        { header: "Spotify is limiting requests" },
+                                        { note: "Spotify asked the app to wait before refreshing "
+                                            + names.join(", ") + ". Back in about " + wait
+                                            + ". Until then you see the last saved copy. Soloist on this computer can still play; remote controls may need to wait." },
+                                        { label: "Details in Settings", icon: "󰒓",
+                                          action: function() { root.navigate({ kind: "settings" }); } }
+                                    ], limitBadge, limitBadge.width - 280, limitBadge.height + 8);
+                                }
                             }
                         }
 
@@ -869,6 +974,19 @@ Item {
                             anchors.fill: parent
                             visible: root.page.kind === "home"
                             app: root
+                        }
+
+                        HistoryPage {
+                            anchors.fill: parent
+                            visible: root.page.kind === "history"
+                            app: root
+                        }
+
+                        ShelfPage {
+                            anchors.fill: parent
+                            visible: root.page.kind === "shelf"
+                            app: root
+                            shelf: root.lastShelf
                         }
 
                         SearchPage {

@@ -250,6 +250,19 @@ Item {
             "omarchy plugin update vleeuwenmenno.omasoloist && echo && echo 'Restart the shell to finish: omarchy restart shell'"]);
     }
 
+    // Spotify keeps only the last 50 plays; save them to the local history
+    // log (bin/spotify.py) often enough that none fall off in between.
+    Timer {
+        // Plays on your phone count too, so this doesn't wait for Soloist.
+        interval: 60000
+        repeat: true
+        running: spotifyApi.signedIn
+        onTriggered: {
+            interval = 30 * 60 * 1000;
+            spotifyApi.call(["history-sync"], function() {});
+        }
+    }
+
     // Catch likes made in other Spotify apps.
     Timer {
         interval: 30000

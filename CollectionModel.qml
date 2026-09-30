@@ -3,8 +3,9 @@ import QtQuick
 // Loads the tracks of one playlist, album or Liked Songs page by page and
 // starts playback from a chosen track. Shared by the bar popup and the app
 // window.
-QtObject {
+Item {
     id: root
+    visible: false
 
     required property var api
     property var collection: null
@@ -17,6 +18,7 @@ QtObject {
     property bool loadedAll: false
     property string error: ""
     property string pendingUri: ""
+    property int revision: 0
     // Keep loading pages until everything is in (sorting and filtering need
     // the whole list). Capped at 5000 songs.
     property bool wantAll: false
@@ -30,8 +32,13 @@ QtObject {
     readonly property bool isLiked: collection !== null && collection.kind === "liked"
 
     function load(reset) {
-        if (!collection || loading || (!reset && loadedAll)) return;
-        if (reset) { tracks = []; total = 0; loadedAll = false; error = ""; meta = null; }
+        if (reset) {
+            revision++;
+            loading = false;
+            tracks = []; total = 0; loadedAll = false; error = ""; meta = null;
+        }
+        if (!collection || loading || (!reset && loadedAll) || !api.signedIn) return;
+        var requestedRevision = revision;
         loading = true;
         var requested = collection;
         var kind = collection.kind;
@@ -40,14 +47,16 @@ QtObject {
             : kind === "album" ? ["album-tracks", collection.id, String(tracks.length)]
             : ["playlist-tracks", collection.id, String(tracks.length)];
         api.call(args, function(result) {
-            if (requested !== root.collection) return;
+            if (requestedRevision !== root.revision || requested !== root.collection) return;
             root.loading = false;
             if (!result.ok) { root.error = result.error; return; }
             if (result.meta) root.meta = result.meta;
             root.tracks = root.tracks.concat(result.items);
             root.total = result.total;
             root.loadedAll = !result.next;
-            if (root.wantAll && !root.loadedAll && root.tracks.length < 5000) Qt.callLater(function() { root.load(false); });
+            if (root.wantAll && !root.loadedAll && root.tracks.length < 5000) Qt.callLater(function() {
+                if (requestedRevision === root.revision) root.load(false);
+            });
         });
     }
 
@@ -65,4 +74,14 @@ QtObject {
     }
 
     onCollectionChanged: load(true)
+
+    Connections {
+        target: root.api
+        function onSessionReset() { root.load(true); }
+        function onSignedInChanged() { if (root.api.signedIn) root.load(true); }
+        function onCacheCleared(group) { if (group !== "lyrics") root.load(true); }
+        function onLibraryChanged(uri) {
+            if (root.isLiked || (root.collection && root.collection.uri === uri)) root.load(true);
+        }
+    }
 }

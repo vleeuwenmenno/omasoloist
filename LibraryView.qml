@@ -4,8 +4,10 @@ import QtQuick.Controls as Controls
 import qs.Commons
 import qs.Ui as Ui
 
-// "Your Library": Liked Songs first, then the user's playlists. Selecting an
-// entry opens it in `openCollection`; the play button starts it directly.
+// "Your Library": Liked Songs first, then the user's playlists, saved albums
+// and followed artists, with Spotify's Playlists / Artists / Albums filter
+// chips. Selecting an entry opens it in `openCollection`; the play button
+// starts it directly.
 Item {
     id: root
 
@@ -25,11 +27,27 @@ Item {
     readonly property color dim: Qt.darker(foreground, 1.45)
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-    property var playlists: []
+    // Each kind pages on its own; "All" walks them in this order.
+    readonly property var kinds: ["playlist", "album", "artist"]
+    property var sources: emptySources()
     property bool loading: false
-    property bool loadedAll: false
     property string error: ""
     property int retries: 0
+    property int revision: 0
+    property bool initialized: false
+    property bool freshPages: false
+    // "" (all), "playlist", "album" or "artist".
+    property string filter: ""
+    onFilterChanged: { list.positionViewAtBeginning(); load(false); }
+
+    readonly property var playlists: sources.playlist.items
+    readonly property bool loadedAll: kinds.every(function(k) { return root.sources[k].done; })
+
+    function emptySources() {
+        return { playlist: { items: [], done: false, cursor: "" },
+                 album: { items: [], done: false, cursor: "" },
+                 artist: { items: [], done: false, cursor: "" } };
+    }
 
     Timer {
         id: retryTimer
@@ -41,27 +59,60 @@ Item {
         kind: "liked", name: "Liked Songs", uri: root.controller.likedSongsUri,
         owner: "Playlist", cover: "", count: -1
     })
-    readonly property var rows: [likedSongs].concat(playlists)
+    readonly property var rows: filter === "album" ? sources.album.items
+        : filter === "artist" ? sources.artist.items
+        : filter === "playlist" ? [likedSongs].concat(sources.playlist.items)
+        : [likedSongs].concat(sources.playlist.items, sources.album.items, sources.artist.items)
+
+    // The kind the next page comes from: the filtered one, or in "All" the
+    // first that isn't complete.
+    function nextKind() {
+        if (filter !== "") return sources[filter].done ? "" : filter;
+        for (var i = 0; i < kinds.length; i++) if (!sources[kinds[i]].done) return kinds[i];
+        return "";
+    }
 
     function load(reset, fresh) {
-        if (!api || loading || (!reset && loadedAll) || !api.signedIn) return;
-        if (reset) { playlists = []; loadedAll = false; }
+        if (reset) {
+            revision++;
+            loading = false;
+            initialized = false;
+            sources = emptySources();
+            error = "";
+            freshPages = !!fresh;
+            retryTimer.stop();
+        }
+        if (!api || !api.signedIn) return;
+        var kind = nextKind();
+        if (loading || kind === "") return;
+        var source = sources[kind];
+        var args = kind === "playlist" ? ["playlists", String(source.items.length)]
+            : kind === "album" ? ["saved-albums", String(source.items.length)]
+            : ["followed-artists", source.cursor];
         loading = true;
+        initialized = true;
+        var requestedRevision = revision;
         error = "";
-        api.call((fresh ? ["--fresh"] : []).concat(["playlists", String(playlists.length)]), function(result) {
+        api.call((freshPages ? ["--fresh"] : []).concat(args), function(result) {
             // The view may be gone by now (shell reload, popup rebuilt).
-            if (!root) return;
+            if (!root || requestedRevision !== root.revision) return;
             root.loading = false;
             if (!result.ok) {
                 root.error = result.error;
-                if (root.playlists.length === 0 && root.retries < 3) { root.retries++; retryTimer.restart(); }
+                if (!result.rateLimited && !result.cancelled && kind === "playlist" && root.playlists.length === 0 && root.retries < 3) { root.retries++; retryTimer.restart(); }
                 return;
             }
             root.retries = 0;
-            root.playlists = root.playlists.concat(result.items.map(function(p) {
-                return Object.assign({ kind: "playlist" }, p);
-            }));
-            root.loadedAll = !result.next;
+            var next = Object.assign({}, root.sources);
+            next[kind] = {
+                items: source.items.concat(result.items.map(function(p) { return Object.assign({ kind: kind }, p); })),
+                done: !result.next,
+                cursor: result.cursor || ""
+            };
+            root.sources = next;
+            // Keep filling until the list can scroll, so "All" reaches albums
+            // and artists without a scroll past a short playlist list.
+            Qt.callLater(function() { if (root && requestedRevision === root.revision && list.contentHeight <= list.height) root.load(false); });
         });
     }
 
@@ -73,11 +124,23 @@ Item {
     // Answers are cached, so an early load costs nothing.
     onVisibleChanged: ensureLoaded()
     Component.onCompleted: ensureLoaded()
-    function ensureLoaded() { if (playlists.length === 0 && !loading) load(true); }
+    function ensureLoaded() { if (!initialized && !loading) load(true); }
+
+    function subtitle(entry) {
+        if (entry.kind === "liked") return "Playlist";
+        if (entry.kind === "artist") return "Artist";
+        if (entry.kind === "album") return "Album · " + (entry.owner || "");
+        return "Playlist · " + entry.owner + (entry.count > 0 ? " · " + entry.count + " songs" : "");
+    }
     Connections {
         target: root.api
         function onSignedInChanged() { if (root.api.signedIn) root.load(true); }
         function onCheckedChanged() { root.ensureLoaded(); }
+        function onSessionReset() { root.load(true); }
+        function onCacheCleared(group) { if (group === "api" || group === "all" || group === "images") root.load(true); }
+        function onLibraryChanged(uri) {
+            if (uri.indexOf("spotify:track:") !== 0 && uri.indexOf("spotify:episode:") !== 0) root.load(true);
+        }
     }
 
     Item {
@@ -130,6 +193,67 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         foreground: root.foreground
+    }
+
+    // Filter chips, like Spotify's: pick one to show only that kind; the ×
+    // goes back to everything.
+    Row {
+        id: chips
+        visible: root.api.signedIn
+        anchors.top: separator.bottom
+        anchors.topMargin: Style.space(8)
+        anchors.left: parent.left
+        height: visible ? Style.space(30) : 0
+        spacing: Style.space(6)
+
+        Rectangle {
+            visible: root.filter !== ""
+            width: height
+            height: parent.height
+            radius: height / 2
+            color: clearHover.hovered ? Style.selectedFillFor(root.foreground, Color.accent)
+                : Style.normalFillFor(root.foreground, Color.accent)
+
+            Text {
+                anchors.centerIn: parent
+                text: "󰅖"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+            }
+            HoverHandler { id: clearHover; cursorShape: Qt.PointingHandCursor }
+            TapHandler { onTapped: root.filter = "" }
+        }
+
+        Repeater {
+            model: [{ id: "playlist", label: "Playlists" }, { id: "artist", label: "Artists" }, { id: "album", label: "Albums" }]
+
+            Rectangle {
+                id: chip
+                required property var modelData
+                readonly property bool selected: root.filter === modelData.id
+                visible: root.filter === "" || selected
+                width: chipLabel.implicitWidth + Style.space(24)
+                height: chips.height
+                radius: height / 2
+                color: selected ? root.foreground
+                    : chipHover.hovered ? Style.selectedFillFor(root.foreground, Color.accent)
+                    : Style.normalFillFor(root.foreground, Color.accent)
+
+                Text {
+                    id: chipLabel
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: chip.modelData.label
+                    color: chip.selected ? Color.background : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: chip.selected
+                }
+                HoverHandler { id: chipHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: root.filter = chip.selected ? "" : chip.modelData.id }
+            }
+        }
     }
 
     // Web API sign-in
@@ -195,8 +319,8 @@ Item {
     ListView {
         id: list
         visible: root.api.signedIn
-        anchors.top: separator.bottom
-        anchors.topMargin: Style.space(4)
+        anchors.top: chips.bottom
+        anchors.topMargin: Style.space(8)
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -238,7 +362,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: Style.space(44)
                 height: width
-                radius: Style.space(3)
+                radius: row.entry.kind === "artist" ? width / 2 : Style.space(3)
                 clip: true
                 // Liked Songs gets Spotify's purple-to-blue tile.
                 gradient: row.entry.kind === "liked" ? likedGradient : null
@@ -264,7 +388,8 @@ Item {
                 Text {
                     anchors.centerIn: parent
                     visible: !row.entry.cover
-                    text: row.entry.kind === "liked" ? "󰋑" : "󰲸"
+                    text: row.entry.kind === "liked" ? "󰋑" : row.entry.kind === "artist" ? "󰀄"
+                        : row.entry.kind === "album" ? "󰀥" : "󰲸"
                     color: row.entry.kind === "liked" ? "white" : root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body
@@ -306,9 +431,7 @@ Item {
                     width: parent.width
                     elide: Text.ElideRight
                     textFormat: Text.PlainText
-                    text: row.entry.kind === "liked" ? "Playlist"
-                        : "Playlist · " + row.entry.owner
-                          + (row.entry.count > 0 ? " · " + row.entry.count + " songs" : "")
+                    text: root.subtitle(row.entry)
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption

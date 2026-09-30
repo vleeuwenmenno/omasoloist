@@ -26,6 +26,7 @@ Item {
     property bool loading: false
     property string error: ""
     property string transferringId: ""
+    property int revision: 0
 
     readonly property var current: devices.filter(function(d) { return d.active; })[0] || null
     readonly property var others: devices.filter(function(d) { return !d.active; })
@@ -54,7 +55,9 @@ Item {
     function refresh() {
         if (!api.signedIn || loading) return;
         loading = true;
+        var requestedRevision = revision;
         api.call(["devices"], function(result) {
+            if (requestedRevision !== root.revision) return;
             root.loading = false;
             if (!result.ok) { root.error = result.error; return; }
             root.error = "";
@@ -78,8 +81,28 @@ Item {
 
     onVisibleChanged: if (visible) refresh()
 
+    Connections {
+        target: root.api
+        function onSessionReset() {
+            root.revision++;
+            root.devices = [];
+            root.loading = false;
+            root.error = "";
+            root.transferringId = "";
+        }
+        function onSignedInChanged() { if (root.visible && root.api.signedIn) root.refresh(); }
+        function onCacheCleared(group) {
+            if (group === "api" || group === "all") {
+                root.revision++;
+                root.loading = false;
+                root.devices = [];
+                if (root.visible) root.refresh();
+            }
+        }
+    }
+
     Timer {
-        interval: 4000
+        interval: 10000
         repeat: true
         running: root.visible
         onTriggered: root.refresh()
@@ -122,6 +145,18 @@ Item {
         }
 
         Ui.Button {
+            id: restartButton
+            anchors.right: refreshButton.left
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: "󰜉"
+            iconSpinning: root.soloist.starting
+            foreground: root.dim
+            tooltipText: "Restart Soloist (playback stops for a few seconds)"
+            onClicked: if (!root.soloist.starting) root.soloist.restartService()
+        }
+
+        Ui.Button {
+            id: refreshButton
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             iconText: "󰑐"

@@ -326,6 +326,8 @@ Ui.BarWidget {
             glyph: root.spotifyGlyph
             onBack: root.view = "player"
             onOpenCollection: function(collection) {
+                // The popup has no artist page; the app window does.
+                if (collection.kind === "artist") { root.openInApp(collection.uri, collection.name); return; }
                 root.openedCollection = collection;
                 root.view = "collection";
             }

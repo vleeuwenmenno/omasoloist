@@ -3,8 +3,9 @@ import "../Entity.js" as Entity
 
 // Lyrics and artist info for whatever is playing, shared by the Now Playing
 // panel and the lyrics page. Only fetches while `active`.
-QtObject {
+Item {
     id: root
+    visible: false
 
     required property var api
     required property var player
@@ -24,6 +25,7 @@ QtObject {
     property var about: null
     property bool aboutLoading: false
     property string aboutFor: ""
+    property int revision: 0
 
     readonly property var synced: lyrics && lyrics.synced ? lyrics.synced : []
     readonly property var plainLines: lyrics && lyrics.plain ? lyrics.plain.split("\n") : []
@@ -42,6 +44,7 @@ QtObject {
 
     function refresh() {
         if (!active || !item) return;
+        var requestedRevision = revision;
         if (trackUri !== "" && trackUri !== lyricsFor) {
             var uri = trackUri;
             lyricsFor = uri;
@@ -49,7 +52,7 @@ QtObject {
             lyricsLoading = true;
             api.call(["lyrics", Entity.firstArtist(item), Entity.name(item), player.album,
                       String(Math.round(player.durationMs))], function(result) {
-                if (uri !== root.lyricsFor) return;
+                if (requestedRevision !== root.revision || uri !== root.lyricsFor) return;
                 root.lyricsLoading = false;
                 root.lyrics = result.ok ? result : { found: false, error: result.error };
                 // LRCLIB fails intermittently (503); ask again shortly.
@@ -62,7 +65,7 @@ QtObject {
             about = null;
             aboutLoading = true;
             api.call(["artist-about", id], function(result) {
-                if (id !== root.aboutFor) return;
+                if (requestedRevision !== root.revision || id !== root.aboutFor) return;
                 root.aboutLoading = false;
                 root.about = result.ok ? result : null;
             });
@@ -80,4 +83,29 @@ QtObject {
     onActiveChanged: refresh()
     onTrackUriChanged: refresh()
     onArtistIdChanged: refresh()
+
+    Connections {
+        target: root.api
+        function onCacheCleared(group) {
+            root.revision++;
+            // Any callbacks invalidated here need their loading state reset.
+            root.lyricsFor = "";
+            root.aboutFor = "";
+            root.lyricsLoading = false;
+            root.aboutLoading = false;
+            root.retryLyrics.stop();
+            root.refresh();
+        }
+        function onSessionReset() {
+            root.revision++;
+            root.lyrics = null;
+            root.lyricsFor = "";
+            root.lyricsLoading = false;
+            root.retryLyrics.stop();
+            root.about = null;
+            root.aboutFor = "";
+            root.aboutLoading = false;
+        }
+        function onSignedInChanged() { if (root.api.signedIn) root.refresh(); }
+    }
 }

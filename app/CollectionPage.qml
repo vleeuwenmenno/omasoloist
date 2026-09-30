@@ -23,6 +23,20 @@ Item {
         return value ? value : (meta && meta[name] ? meta[name] : "");
     }
 
+    function escapeHtml(text) {
+        return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+    function link(uri, name) { return uri ? '<a href="' + escapeHtml(uri) + '">' + escapeHtml(name) + '</a>' : escapeHtml(name); }
+    // Older cached album answers only carry the first artist's URI.
+    readonly property string ownerMarkup: {
+        var artists = field("artists");
+        if (Array.isArray(artists) && artists.length > 0)
+            return artists.map(function(a) { return root.link(a.uri, a.name); }).join(", ");
+        var owner = field("owner");
+        var uri = field("artist_uri");
+        return uri && owner.indexOf(",") < 0 ? link(uri, owner) : escapeHtml(owner);
+    }
+
     // Find the highlighted track, loading more pages (up to 20, 1000 songs)
     // until it shows up.
     function tryHighlight() {
@@ -238,13 +252,17 @@ Item {
                         font.pixelSize: Style.font.bodySmall
                     }
 
+                    // An album's artists link to their pages.
                     Text {
                         width: parent.width
                         elide: Text.ElideRight
-                        textFormat: Text.PlainText
-                        text: [root.field("owner"), root.field("year"),
+                        textFormat: Text.StyledText
+                        linkColor: root.fg
+                        text: [root.ownerMarkup, root.escapeHtml(root.field("year")),
                                tracks.total > 0 ? tracks.total + " songs" + (tracks.loadedAll ? ", " + root.formatTotal(tracks.totalMs) : "") : ""]
                             .filter(function(x) { return x; }).join(" • ")
+                        onLinkActivated: function(link) { root.app.openUri(link, ""); }
+                        HoverHandler { cursorShape: parent.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.ArrowCursor }
                         color: root.fg
                         font.family: Style.font.family
                         font.pixelSize: Style.font.bodySmall

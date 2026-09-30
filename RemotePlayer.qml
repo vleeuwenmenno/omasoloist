@@ -89,18 +89,32 @@ Item {
     }
 
     function poll() {
-        if (pollBusy) return;
+        if (!polling || pollBusy || Date.now() < retryUntil) return;
         pollBusy = true;
+        var requestedRevision = revision;
         api.call(["player"], function(result) {
+            if (requestedRevision !== root.revision) return;
             root.pollBusy = false;
+            if (result.rateLimited) root.retryUntil = Date.now() + result.retryAfter * 1000;
             root.apply(result);
         });
-        if (queueWanted) refreshQueue();
+        if (queueWanted && Date.now() - lastQueuePoll >= 15000) refreshQueue();
     }
     property bool pollBusy: false
+    property bool queueBusy: false
+    property real lastQueuePoll: 0
+    property real retryUntil: 0
+    property int revision: 0
 
     function refreshQueue() {
+        if (!polling || queueBusy || Date.now() < retryUntil) return;
+        queueBusy = true;
+        lastQueuePoll = Date.now();
+        var requestedRevision = revision;
         api.call(["queue"], function(result) {
+            if (requestedRevision !== root.revision) return;
+            root.queueBusy = false;
+            if (result.rateLimited) root.retryUntil = Date.now() + result.retryAfter * 1000;
             if (!result.ok) return;
             root.queueUpcoming = result.upcoming.map(function(t) {
                 return { source: "context", item: Entity.fromTrack(t) };
@@ -113,7 +127,11 @@ Item {
     function control(action, value) {
         var args = ["control", deviceId, action];
         if (value !== undefined) args.push(String(value));
-        api.call(args, function() { settle.restart(); });
+        api.call(args, function(result) {
+            if (!result.ok) { if (result.rateLimited) root.retryUntil = Date.now() + result.retryAfter * 1000; return; }
+            root.lastQueuePoll = 0;
+            settle.restart();
+        });
     }
 
     function play(uri) {
@@ -140,10 +158,27 @@ Item {
     onPollingChanged: if (polling) poll()
 
     Timer {
-        interval: root.fast ? 1500 : 5000
+        interval: Math.max(root.fast ? 3000 : 10000, root.retryUntil - Date.now())
         repeat: true
         running: root.polling
         onTriggered: root.poll()
+    }
+
+    Connections {
+        target: root.api
+        function onSessionReset() {
+            root.revision++;
+            root.pollBusy = false;
+            root.queueBusy = false;
+            root.active = false;
+            root.device = null;
+            root.item = null;
+            root.context = null;
+            root.queueUpcoming = [];
+            root.playing = false;
+            root.retryUntil = 0;
+            root.lastQueuePoll = 0;
+        }
     }
 
     Timer {

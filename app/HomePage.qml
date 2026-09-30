@@ -12,15 +12,24 @@ Flickable {
     property var home: null
     property bool loading: false
     property string error: ""
+    property int revision: 0
+    // Loaded while Spotify held something back: sections may be empty or old.
+    property bool partial: false
+    property real loadedAt: 0
 
-    function load() {
+    function load(reset) {
+        if (reset) { revision++; loading = false; home = null; error = ""; }
         if (loading || !app.service.api.signedIn) return;
         loading = true;
+        var requestedRevision = revision;
         app.service.api.call(["home"], function(result) {
+            if (requestedRevision !== root.revision) return;
             root.loading = false;
             if (!result.ok) { root.error = result.error; return; }
             root.error = "";
             root.home = result;
+            root.loadedAt = Date.now();
+            root.partial = !!result.stale || root.app.service.api.limits.length > 0;
         });
     }
 
@@ -30,9 +39,18 @@ Flickable {
     }
 
     Component.onCompleted: load()
+    // Reopening Home after a while refetches; answers are cached, so this is cheap.
+    onVisibleChanged: if (visible && home && Date.now() - loadedAt > 5 * 60 * 1000) load()
     Connections {
         target: root.app.service.api
         function onSignedInChanged() { if (root.app.service.api.signedIn) root.load(); }
+        // A limit just lifted: fill in what was missing, keeping the page up meanwhile.
+        function onLimitsChanged() { if (root.partial && root.app.service.api.limits.length === 0) root.load(); }
+        function onSessionReset() { root.load(true); }
+        function onCacheCleared(group) { if (group !== "lyrics") root.load(true); }
+        function onLibraryChanged(uri) {
+            if (uri.indexOf("spotify:playlist:") === 0) root.load(true);
+        }
     }
 
     clip: true
@@ -159,8 +177,24 @@ Flickable {
         Shelf {
             width: parent.width
             app: root.app
-            title: "Recently played"
-            items: root.home ? root.home.recentAlbums : []
+            title: "Jump back in"
+            items: root.home ? root.home.recents || root.home.recentAlbums || [] : []
+        }
+
+        Shelf {
+            width: parent.width
+            app: root.app
+            subtitle: "Non-stop music based on your favorite artists"
+            title: "Recommended stations"
+            items: root.home ? root.home.stations || [] : []
+        }
+
+        Shelf {
+            width: parent.width
+            app: root.app
+            title: "Popular radio"
+            subtitle: "Stations of artists your favorites' fans also like"
+            items: root.home ? root.home.popularRadio || [] : []
         }
 
         Shelf {

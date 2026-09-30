@@ -92,7 +92,53 @@ Flickable {
         });
     }
 
-    onVisibleChanged: if (visible) load()
+    // Settings > Cache (bin/spotify.py cache-info / cache-clear).
+    property var cache: null
+    property string clearing: ""
+    function loadCache() {
+        service.api.call(["cache-info"], function(result) { if (result.ok) root.cache = result; });
+    }
+    function clearCache(id) {
+        clearing = id;
+        service.api.call(["cache-clear", id], function(result) {
+            root.clearing = "";
+            if (result.ok) root.cache = result;
+            else root.error = result.error;
+        });
+    }
+    // Settings > Listening history (bin/spotify.py history-info / history-clear).
+    property var history: null
+    property bool confirmHistoryClear: false
+    function loadHistory() {
+        if (!service.api.signedIn) { history = null; return; }
+        service.api.call(["history-info"], function(result) { if (result.ok) root.history = result; });
+    }
+    function clearHistory() {
+        if (!confirmHistoryClear) { confirmHistoryClear = true; return; }
+        confirmHistoryClear = false;
+        service.api.call(["history-clear"], function(result) {
+            if (result.ok) root.history = result;
+            else root.error = result.error;
+        });
+    }
+
+    function formatBytes(n) {
+        return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B";
+    }
+    function formatWait(seconds) {
+        var minutes = Math.max(1, Math.round(seconds / 60));
+        return minutes >= 60 ? Math.floor(minutes / 60) + " h " + (minutes % 60) + " min" : minutes + " min";
+    }
+
+    Connections {
+        target: root.service.api
+        function onSessionReset() { root.me = null; }
+        function onSignedInChanged() { if (root.service.api.signedIn && root.visible) root.load(); }
+        function onCacheCleared(group) { if (root.visible && (group === "api" || group === "all" || group === "images")) root.load(); }
+    }
+
+    onVisibleChanged: if (visible) { load(); loadCache(); loadHistory(); service.api.refreshLimits(); }
+        else confirmHistoryClear = false
 
     clip: true
     contentHeight: content.implicitHeight + 64
@@ -441,6 +487,18 @@ Flickable {
             }
         }
 
+        SectionTitle { text: "App window" }
+
+        SettingRow {
+            label: "Open as a floating window"
+            detail: "Float, size and center this window each time it opens. Turn off to let Hyprland tile it"
+
+            Ui.ToggleSwitch {
+                checked: root.app.floatWindow
+                onToggled: root.app.floatWindow = !root.app.floatWindow
+            }
+        }
+
         // ------------------------------------------------------------ about
         SectionTitle { text: "About" }
 
@@ -465,6 +523,119 @@ Flickable {
                 color: root.app.dim
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
+            }
+        }
+
+        // ------------------------------------------------ listening history
+        SectionTitle { text: "Listening history"; visible: root.history !== null }
+
+        SettingRow {
+            visible: root.history !== null
+            label: root.history && root.history.plays
+                ? root.history.plays.toLocaleString(Qt.locale("en_US"), "f", 0) + " plays since "
+                    + new Date(root.history.since).toLocaleDateString(Qt.locale(), Locale.LongFormat)
+                : "No plays saved yet"
+            detail: "Spotify only keeps your last 50 plays, so this computer saves them for Recents"
+                + (root.history ? " · " + root.formatBytes(root.history.bytes) + " in " + root.history.dir : "")
+
+            Ui.Button {
+                bordered: true
+                enabled: root.history !== null && root.history.plays > 0
+                text: root.confirmHistoryClear ? "Click again to delete" : "Clear"
+                foreground: Color.urgent
+                onClicked: root.clearHistory()
+            }
+        }
+
+        // ------------------------------------------------------------ cache
+        SectionTitle { text: "Cache" }
+
+        Text {
+            visible: root.cache !== null && root.cache.stats !== undefined
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: root.cache && root.cache.stats ? "Spotify requests: " + (root.cache.stats.requests || 0)
+                + " · Served from cache: " + (root.cache.stats.cacheHits || 0)
+                + " · Rate-limit responses: " + (root.cache.stats.rateLimited || 0)
+                + "\nCounts since " + (root.cache.stats.since ? new Date(root.cache.stats.since * 1000).toLocaleDateString() : "first request") : ""
+            color: root.app.dim
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+        }
+
+        Text {
+            width: parent.width
+            bottomPadding: 4
+            wrapMode: Text.WordWrap
+            text: (root.cache ? root.formatBytes(root.cache.bytes) + " in " + root.cache.dir + ". " : "")
+                + "Cached answers keep Spotify's request limits at bay and fill in while Spotify holds an endpoint back, "
+                + "so clearing Spotify data while it is limited leaves those views empty until it lifts."
+            color: root.app.dim
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+        }
+
+        Repeater {
+            model: root.cache ? root.cache.groups : []
+
+            SettingRow {
+                id: cacheRow
+                required property var modelData
+                label: modelData.label
+                detail: modelData.detail + " · " + root.formatBytes(modelData.bytes)
+                    + " · " + modelData.files.toLocaleString(Qt.locale("en_US"), "f", 0) + " files"
+
+                Ui.Button {
+                    bordered: true
+                    enabled: root.clearing === "" && cacheRow.modelData.files > 0
+                    text: root.clearing === cacheRow.modelData.id || root.clearing === "all" ? "Clearing…" : "Clear"
+                    foreground: root.app.fg
+                    onClicked: root.clearCache(cacheRow.modelData.id)
+                }
+            }
+        }
+
+        SettingRow {
+            label: "Everything"
+            detail: "All of the above. Your sign-in and settings stay"
+
+            Ui.Button {
+                bordered: true
+                enabled: root.clearing === "" && root.cache !== null && root.cache.bytes > 0
+                text: root.clearing === "all" ? "Clearing…" : "Clear all"
+                foreground: Color.urgent
+                onClicked: root.clearCache("all")
+            }
+        }
+
+        // Active Spotify cooldowns, including the shared Web API limit.
+        Item { width: 1; height: 8; visible: limitBox.visible }
+
+        Rectangle {
+            id: limitBox
+            visible: root.service.api.limits.length > 0
+            width: parent.width
+            height: limitText.implicitHeight + 24
+            radius: 6
+            color: Qt.rgba(root.app.warning.r, root.app.warning.g, root.app.warning.b, 0.12)
+            border.width: 1
+            border.color: Qt.rgba(root.app.warning.r, root.app.warning.g, root.app.warning.b, 0.6)
+
+            Text {
+                id: limitText
+                x: 12
+                y: 12
+                width: parent.width - 24
+                wrapMode: Text.WordWrap
+                textFormat: Text.PlainText
+                text: "Spotify is limiting requests\n"
+                    + root.service.api.limits.map(function(l) {
+                          return l.label + " (" + l.endpoint + "): " + root.formatWait(l.seconds);
+                      }).join("\n")
+                    + "\n\nThese waits aren't cleared with the cache, so the app doesn't ask again early."
+                color: root.app.warning
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
             }
         }
     }

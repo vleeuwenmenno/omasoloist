@@ -23,7 +23,14 @@ Everything follows your Omarchy theme.
 **App window**
 
 - Library sidebar with Liked Songs and your playlists
-- Home page with recently played and your top artists and tracks
+- Home page with "Jump back in", stations from your top artists, popular
+  radio from related artists, and your top artists and tracks; every shelf
+  has "Show all"
+- Recents page: your plays by day, grouped by album, artist or playlist,
+  each expandable to its songs. Spotify only keeps your last 50 plays, so
+  the app saves them every 30 minutes to
+  `~/.local/state/omasoloist/history/` and Recents goes back as far as that
+  log does (clear it in Settings)
 - Search with All / Songs / Artists / Albums / Playlists filters
 - Playlist, album and artist pages (popular tracks, releases, related
   artists, monthly listeners)
@@ -92,7 +99,7 @@ first. Update later with `omarchy plugin update vleeuwenmenno.omasoloist`.
 plugin directory (its name must be the plugin id), then rescan:
 
 ```bash
-git clone --branch v0.3.5 --depth 1 https://github.com/vleeuwenmenno/omasoloist.git \
+git clone --branch v0.4.0 --depth 1 https://github.com/vleeuwenmenno/omasoloist.git \
   ~/.config/omarchy/plugins/vleeuwenmenno.omasoloist
 omarchy-shell shell rescanPlugins
 ```
@@ -165,7 +172,7 @@ rm -rf ~/.config/omasoloist ~/.local/state/omasoloist ~/.cache/omasoloist
 - `~/.local/state/omasoloist/`: Spotify sign-in tokens and window layout
 - `~/.cache/omasoloist/`: cached API answers, artwork and lyrics
 
-If you added the Hyprland float rule, remove its line from
+If you added the Hyprland float rule from older versions, remove its line from
 `~/.config/hypr/windows.lua`. Soloist itself is separate; see
 [Uninstalling](docs/install-soloist-systemd.md#uninstalling) in its guide.
 
@@ -223,12 +230,8 @@ omarchy-shell shell summon vleeuwenmenno.omasoloist '{"page":"settings"}'
 
 ### Floating app window
 
-Hyprland tiles the app window like any other window. To float it, add a rule to
-`~/.config/hypr/windows.lua`:
-
-```lua
-o.window({ class = "^org.quickshell$", title = "^Soloist$" }, { float = true, size = { 1280, 800 }, center = true })
-```
+The app window opens floating, 1280×800 and centered. To let Hyprland tile it
+instead, turn off **Settings > App window > Open as a floating window**.
 
 ## Files
 
@@ -238,6 +241,44 @@ o.window({ class = "^org.quickshell$", title = "^Soloist$" }, { float = true, si
 | `~/.local/state/omasoloist/token.json` | Spotify OAuth tokens (mode 0600) |
 | `~/.cache/omasoloist/` | Cached artwork and API responses |
 | `~/.local/share/soloist/` | Soloist's own data: paired session, settings, `ws.port` |
+
+## Cache and request limits
+
+**Settings > Cache** shows storage use, request counters and active Spotify
+cooldowns. You can clear individual groups or all cached content. Clearing does
+not remove your sign-in, request history, pacing budget or cooldowns. Views reload
+after clearing; pending responses cannot restore data invalidated by a mutation.
+
+Web API responses are isolated by sign-in session. Concurrent helpers share one
+fetch for each cached URL, and token refreshes retain the session's cache. Likes
+are cached for 30 seconds; live playback state is not cached. Failed capability
+checks for Spotify's editorial playlists are remembered for five minutes.
+
+The helper serializes Web API requests, spaces their starts by at least 350 ms,
+and allows at most 20 requests per rolling 30 seconds. Four slots are reserved
+for direct controls rather than reads or bulk queue additions. These are local
+pacing choices, not Spotify's published limits. Remote playback polls every
+3 seconds while a view is open and every 10 seconds otherwise; its queue is
+polled at most every 15 seconds unless a user action requests a refresh.
+
+A 429 immediately records the full `Retry-After` deadline without automatically
+retrying. General rate limits apply across the Web API. Development quotas share
+unpublished buckets across a developer account, so `QUOTA_EXCEEDED` conservatively
+pauses all Web API requests too. Existing endpoint cooldowns remain honored.
+Public Spotify pages have a separate cooldown. Cached answers remain available
+and stale responses are marked. Soloist's local controls still work during Web
+API cooldowns; remote controls may need to wait. See Spotify's
+[rate-limit documentation](https://developer.spotify.com/documentation/web-api/concepts/rate-limits)
+and [quota documentation](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
+Other apps using the same developer account can still exhaust its shared quota.
+
+Offline regression checks:
+
+```bash
+python3 -I -m unittest discover -s tests -v
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME= QT_QUICK_CONTROLS_STYLE=Basic QT_STYLE_OVERRIDE=Fusion \
+  /usr/lib/qt6/bin/qmltestrunner -input tests/qml -platform offscreen
+```
 
 ## Known limitations
 

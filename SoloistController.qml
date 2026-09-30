@@ -85,6 +85,14 @@ Item {
         startTimeout.restart();
     }
 
+    // Playback drops for a few seconds; the trace stream reconnects by itself.
+    function restartService() {
+        starting = true;
+        Quickshell.execDetached(["systemctl", "--user", "restart", serviceName]);
+        serviceCheck.running = true;
+        startTimeout.restart();
+    }
+
     function play(uri) { ctl(uri ? ["play", uri] : ["play"]); }
     function pause() { ctl(["pause"]); }
     function togglePlay() { playing ? pause() : play(); }

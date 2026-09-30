@@ -31,15 +31,49 @@ Column {
         font.pixelSize: Style.font.caption
     }
 
-    Text {
-        leftPadding: 12
-        bottomPadding: 4
-        textFormat: Text.PlainText
-        text: root.title
-        color: root.app.fg
-        font.family: Style.font.family
-        font.pixelSize: Style.font.display
-        font.bold: true
+    Item {
+        width: root.width
+        height: titleText.implicitHeight
+
+        Text {
+            id: titleText
+            anchors.left: parent.left
+            anchors.right: showAll.visible ? showAll.left : parent.right
+            anchors.rightMargin: 12
+            leftPadding: 12
+            bottomPadding: 4
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            text: root.title
+            color: root.app.fg
+            font.family: Style.font.family
+            font.pixelSize: Style.font.display
+            font.bold: true
+        }
+
+        // Only when some cards don't fit, like Spotify.
+        Text {
+            id: showAll
+            visible: root.items.length > root.columns
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            anchors.verticalCenter: titleText.verticalCenter
+            text: "Show all"
+            color: showAllMouse.containsMouse ? root.app.fg : root.app.dim
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+            font.underline: showAllMouse.containsMouse
+
+            MouseArea {
+                id: showAllMouse
+                anchors.fill: parent
+                anchors.margins: -6
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.app.navigate({ kind: "shelf", item: { title: root.title, subtitle: root.subtitle, items: root.items } })
+            }
+        }
     }
 
     Text {

@@ -2,8 +2,9 @@ import QtQuick
 
 // Which tracks are in Liked Songs, cached per URI and shared by every view.
 // `known` is replaced (not mutated) on each change so bindings re-run.
-QtObject {
+Item {
     id: root
+    visible: false
 
     required property var api
 
@@ -14,26 +15,55 @@ QtObject {
 
     property var known: ({})
     property var pending: ({})
+    property var checking: ({})
+    property var checkedAt: ({})
+    property var versions: ({})
+    property int revision: 0
+    property int nextQuery: 0
 
     readonly property bool currentLiked: currentUri !== "" && known[currentUri] === true
 
     function isLiked(uri) { return known[uri] === true; }
 
-    function set(values) {
+    function set(values, fresh, age) {
         var next = Object.assign({}, known);
-        for (var uri in values) next[uri] = values[uri];
+        var times = Object.assign({}, checkedAt);
+        for (var uri in values) {
+            next[uri] = values[uri];
+            times[uri] = fresh === false ? 0 : Date.now() - (age || 0) * 1000;
+        }
+        checkedAt = times;
         known = next;
     }
 
     // Look up any URIs we don't know yet.
     function query(uris) {
         if (!api || !api.signedIn) return;
+        if (api.waitFor("/me/library/contains") > 0) return;
         var missing = (uris || []).filter(function(u) {
-            return u && u.indexOf("spotify:") === 0 && !(u in root.known);
+            return u && u.indexOf("spotify:") === 0 && !root.pending[u] && !root.checking[u]
+                && (!(u in root.known) || Date.now() - (root.checkedAt[u] || 0) >= 30000);
         });
+        missing = missing.filter(function(u, i) { return missing.indexOf(u) === i; });
         if (missing.length === 0) return;
+        var requestedRevision = revision;
+        var requestedVersions = Object.assign({}, versions);
+        var queryId = ++nextQuery;
+        var busy = Object.assign({}, checking);
+        missing.forEach(function(u) { busy[u] = queryId; });
+        checking = busy;
         api.call(["liked-contains"].concat(missing), function(result) {
-            if (result.ok) root.set(result.liked);
+            if (requestedRevision !== root.revision) return;
+            var done = Object.assign({}, root.checking);
+            missing.forEach(function(u) { if (done[u] === queryId) delete done[u]; });
+            root.checking = done;
+            if (!result.ok) return;
+            var values = {};
+            for (var uri in result.liked) {
+                if (!root.pending[uri] && (root.versions[uri] || 0) === (requestedVersions[uri] || 0))
+                    values[uri] = result.liked[uri];
+            }
+            root.set(values, !result.stale, result.cacheAge || 0);
         });
     }
 
@@ -47,6 +77,10 @@ QtObject {
     function toggle(uri) {
         if (!uri || pending[uri]) return;
         var on = !isLiked(uri);
+        var requestedRevision = revision;
+        var nextVersions = Object.assign({}, versions);
+        nextVersions[uri] = (nextVersions[uri] || 0) + 1;
+        versions = nextVersions;
         var change = {};
         change[uri] = on;
         set(change);                       // optimistic
@@ -54,6 +88,7 @@ QtObject {
         busy[uri] = true;
         pending = busy;
         api.call(["like", uri, on ? "on" : "off"], function(result) {
+            if (requestedRevision !== root.revision) return;
             var done = Object.assign({}, root.pending);
             delete done[uri];
             root.pending = done;
@@ -71,6 +106,28 @@ QtObject {
     // Liked state may have changed elsewhere; recheck the playing track.
     function refreshCurrent() {
         if (currentUri === "" || !api || !api.signedIn) return;
-        api.call(["liked-contains", currentUri], function(result) { if (result.ok) root.set(result.liked); });
+        query([currentUri]);
+    }
+
+    function reset() {
+        revision++;
+        known = {};
+        pending = {};
+        checking = {};
+        checkedAt = {};
+        versions = {};
+    }
+
+    Connections {
+        target: root.api
+        function onSessionReset() { root.reset(); }
+        function onCacheCleared(group) {
+            if (group === "api" || group === "all") { root.reset(); root.refreshCurrent(); }
+        }
+        function onLibraryChanged(uri) {
+            var times = Object.assign({}, root.checkedAt);
+            delete times[uri];
+            root.checkedAt = times;
+        }
     }
 }

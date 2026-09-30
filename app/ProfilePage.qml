@@ -15,15 +15,19 @@ Flickable {
     property string error: ""
     property string pendingUri: ""
     property bool showAllTracks: false
+    property int revision: 0
 
     readonly property var player: app.service.player
     // Spotify's colour extracted from the avatar; theme accent otherwise.
     readonly property color heroColor: profile && profile.color ? profile.color : app.accent
 
-    function load() {
+    function load(reset) {
+        if (reset) { revision++; loading = false; profile = null; error = ""; }
         if (loading || !app.service.api.signedIn) return;
         loading = true;
+        var requestedRevision = revision;
         app.service.api.call(["profile"], function(result) {
+            if (requestedRevision !== root.revision) return;
             root.loading = false;
             if (!result.ok) { root.error = result.error; return; }
             root.error = "";
@@ -40,6 +44,14 @@ Flickable {
     }
 
     onVisibleChanged: if (visible && !profile) load()
+
+    Connections {
+        target: root.app.service.api
+        function onSessionReset() { root.revision++; root.loading = false; root.profile = null; }
+        function onSignedInChanged() { if (root.visible && root.app.service.api.signedIn) root.load(); }
+        function onCacheCleared(group) { if (group !== "lyrics") root.load(true); }
+        function onLibraryChanged(uri) { if (uri.indexOf("spotify:track:") !== 0) root.load(true); }
+    }
 
     clip: true
     contentHeight: content.implicitHeight + 48

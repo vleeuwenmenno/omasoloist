@@ -20,6 +20,7 @@ Flickable {
     property string error: ""
     property string pendingUri: ""
     property string lastKey: ""
+    property int revision: 0
 
     readonly property var player: app.service.player
 
@@ -45,6 +46,7 @@ Flickable {
     }
 
     function search() {
+        if (!app.service.api.signedIn) return;
         var q = query.trim();
         var key = q + "\u0000" + filter;
         if (key === lastKey) return;
@@ -52,9 +54,10 @@ Flickable {
         error = "";
         if (q === "") { results = null; filtered = []; return; }
         loading = true;
+        var requestedRevision = revision;
         var args = filter === "all" ? ["search", q] : ["search", q, filter, "0"];
         app.service.api.call(args, function(result) {
-            if (key !== root.lastKey) return;
+            if (requestedRevision !== root.revision || key !== root.lastKey) return;
             root.loading = false;
             if (!result.ok) { root.error = result.error; return; }
             if (root.filter === "all") {
@@ -70,13 +73,33 @@ Flickable {
         if (filter === "all" || loading || !filteredNext) return;
         loading = true;
         var key = lastKey;
+        var requestedRevision = revision;
         app.service.api.call(["search", query.trim(), filter, String(filtered.length)], function(result) {
-            if (key !== root.lastKey) return;
+            if (requestedRevision !== root.revision || key !== root.lastKey) return;
             root.loading = false;
             if (!result.ok) { root.error = result.error; return; }
             root.filtered = root.filtered.concat(result[root.resultKey[root.filter]]);
             root.filteredNext = !!result.next;
         });
+    }
+
+    function reset() {
+        revision++;
+        lastKey = "";
+        results = null;
+        filtered = [];
+        filteredNext = false;
+        loading = false;
+        error = "";
+    }
+
+    Connections {
+        target: root.app.service.api
+        function onSessionReset() { root.reset(); }
+        function onSignedInChanged() { if (root.app.service.api.signedIn) root.search(); }
+        function onCacheCleared(group) {
+            if (group !== "lyrics") { root.reset(); root.search(); }
+        }
     }
 
     function playTracks(list, index) {
