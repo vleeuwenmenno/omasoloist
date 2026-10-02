@@ -366,15 +366,36 @@ Your Spotify tokens stay on your machine in `~/.local/state/omasoloist/`.
 
 ## Development
 
-Work in a clone anywhere and copy it into the plugin directory with:
+Work in a clone outside the plugin directory:
+
+```bash
+make help         # list development commands (also the default for make)
+make install-dev  # park the existing install and symlink this checkout
+make restart      # restart the Omarchy shell
+make update       # install-dev, then restart
+```
+
+`install-dev` links `~/.config/omarchy/plugins/vleeuwenmenno.omasoloist`
+to this checkout's absolute path. An existing install (including a different
+or broken symlink) is moved into a unique directory under
+`~/.config/omarchy/plugin-backups/`. Repeating the command with the same
+checkout leaves the link and backups untouched. `XDG_CONFIG_HOME` is honored
+when set. On first install, enable the widget with
+`omarchy plugin enable vleeuwenmenno.omasoloist`.
+
+After editing, run `make update` to restart the shell and load the changes.
+This applies local code; it does not pull from Git or update system packages.
+The shell's file watcher does not follow symlinks, so use the copy workflow
+instead if you want hot reload:
 
 ```bash
 scripts/dev-sync.sh
 ```
 
 It rsyncs the repo to `~/.config/omarchy/plugins/vleeuwenmenno.omasoloist/`.
-A copy is needed because the shell's file watcher doesn't follow symlinks;
-saving a file there reloads the plugin. Force a reload with
+Run this from a separate checkout with a real directory at the destination,
+not the development symlink. Saving a file in the copied install reloads the
+plugin. Force a reload with
 `omarchy-shell shell rescanPlugins`, and validate the manifest with
 `omarchy plugin validate .`.
 
