@@ -37,7 +37,7 @@ class QmlLogicTests(unittest.TestCase):
 const requests = [];
 const root = {
  api: {signedIn:true, call(args, callback) {requests.push({args,callback});}},
- revision:0, loading:false, initialized:true, freshPages:false, retries:0,
+ active:true, revision:0, loading:false, initialized:true, freshPages:false, retries:0,
  error:'', filter:'', kinds:['playlist','album','artist']
 };
 Object.defineProperty(root,'playlists',{get() {return root.sources.playlist.items;}});
@@ -63,7 +63,7 @@ assert.deepEqual(requests[2].args,['--fresh','playlists','1']);
         self.run_functions("CollectionModel.qml", ["load"], """
 const callbacks=[];
 const root={collection:{kind:'playlist',id:'A'},api:{signedIn:true,call(args,cb){callbacks.push(cb);}},
- revision:0,loading:false,loadedAll:false,tracks:[],total:0,error:'',meta:null,wantAll:false};
+ active:true,revision:0,loading:false,loadedAll:false,tracks:[],total:0,error:'',meta:null,wantAll:false};
 const Qt={callLater() {}};
 INSTALL
 root.load(true);
@@ -83,18 +83,18 @@ Date.now=()=>now;
 const requests=[];
 const uri='spotify:track:A';
 const root={api:{signedIn:true,waitFor(){return 0;},call(args,callback){requests.push({args,callback});}},
- known:{[uri]:false},checkedAt:{[uri]:1000},pending:{},checking:{},versions:{},revision:0,nextQuery:0};
+ known:{[uri]:false},checkedAt:{[uri]:1000},pending:{},checking:{},versions:{},revision:0,nextQuery:0,freshnessMs:900000};
 INSTALL
 root.query([uri]);
 assert.equal(requests.length,0);
-now=31000;
+now=901000;
 root.query([uri,uri]);
 root.query([uri]);
 assert.equal(requests.length,1);
 assert.deepEqual(requests[0].args,['liked-contains',uri]);
 requests[0].callback({ok:true,liked:{[uri]:true}});
 assert.equal(root.known[uri],true);
-assert.equal(root.checkedAt[uri],31000);
+assert.equal(root.checkedAt[uri],901000);
 """)
 
     def test_like_read_cannot_overwrite_optimistic_mutation(self):
@@ -102,7 +102,7 @@ assert.equal(root.checkedAt[uri],31000);
 const requests=[];
 const uri='spotify:track:A';
 const root={api:{signedIn:true,waitFor(){return 0;},call(args,callback){requests.push({args,callback});}},
- known:{[uri]:false},checkedAt:{},pending:{},checking:{},versions:{},revision:0,nextQuery:0,libraryChanged(){}};
+ known:{[uri]:false},checkedAt:{},pending:{},checking:{},versions:{},revision:0,nextQuery:0,freshnessMs:900000,libraryChanged(){}};
 INSTALL
 root.query([uri]);
 root.toggle(uri);
@@ -115,17 +115,17 @@ assert.equal(root.pending[uri],undefined);
 
     def test_disk_cache_hit_does_not_extend_like_freshness(self):
         self.run_functions("Likes.qml", ["set", "query"], """
-let now=100000;
+let now=1000000;
 Date.now=()=>now;
 const requests=[];
 const uri='spotify:track:A';
 const root={api:{signedIn:true,waitFor(){return 0;},call(args,callback){requests.push({args,callback});}},
- known:{},checkedAt:{},pending:{},checking:{},versions:{},revision:0,nextQuery:0};
+ known:{},checkedAt:{},pending:{},checking:{},versions:{},revision:0,nextQuery:0,freshnessMs:900000};
 INSTALL
 root.query([uri]);
-requests[0].callback({ok:true,liked:{[uri]:true},cacheAge:29});
-assert.equal(root.checkedAt[uri],71000);
-now=101001;
+requests[0].callback({ok:true,liked:{[uri]:true},cacheAge:899});
+assert.equal(root.checkedAt[uri],101000);
+now=1001001;
 root.query([uri]);
 assert.equal(requests.length,2);
 """)
@@ -146,7 +146,7 @@ assert.deepEqual(root.known,{});
     def test_remote_player_coalesces_queue_reads_and_honors_cooldown(self):
         self.run_functions("RemotePlayer.qml", ["poll", "refreshQueue"], """
 const requests=[];
-const root={api:{call(args,callback){requests.push({args,callback});}},polling:true,pollBusy:false,
+const root={api:{waitFor(){return 0;},call(args,callback){requests.push({args,callback});}},polling:true,pollBusy:false,
  queueBusy:false,queueWanted:true,lastQueuePoll:0,retryUntil:0,revision:0,apply(){},queueUpcoming:[]};
 const Entity={fromTrack:t=>t};
 INSTALL
@@ -159,6 +159,166 @@ requests[1].callback({ok:true,upcoming:[]});
 root.poll();
 root.refreshQueue();
 assert.equal(requests.length,2);
+""")
+
+    def test_hidden_current_likes_do_not_fetch_and_visible_likes_are_bounded(self):
+        self.run_functions("Likes.qml", ["set", "query", "refreshCurrent"], """
+let now=1000000;
+Date.now=()=>now;
+const requests=[];
+const root={api:{signedIn:true,waitFor(){return 0;},call(args,callback){
+ requests.push(args); callback({ok:true,liked:{[args[1]]:false}});
+}},known:{},checkedAt:{},pending:{},checking:{},versions:{},revision:0,nextQuery:0,
+ currentWanted:false,currentUri:'spotify:track:A',freshnessMs:900000};
+INSTALL
+for (let i=0;i<120;i++) { root.refreshCurrent(); now+=30000; }
+assert.equal(requests.length,0);
+root.currentWanted=true;
+for (let i=0;i<120;i++) { root.refreshCurrent(); now+=30000; }
+assert.equal(requests.length,4);
+root.currentUri='spotify:track:B';
+root.refreshCurrent();
+assert.equal(requests.length,5);
+""")
+
+    def test_remote_uses_shared_cooldown_and_recovers_without_an_extra_queue_poll(self):
+        self.run_functions("RemotePlayer.qml", ["poll", "refreshQueue"], """
+let now=1000000, cooldown=60;
+Date.now=()=>now;
+const requests=[];
+const root={api:{waitFor(){return cooldown;},call(args,callback){requests.push({args,callback});}},
+ polling:true,pollBusy:false,queueBusy:false,queueWanted:true,lastQueuePoll:now,retryUntil:0,
+ revision:0,active:true,item:{uri:'A'},apply(result){root.item=result.item;},queueUpcoming:[]};
+const Entity={fromTrack:t=>t};
+INSTALL
+root.poll(); root.refreshQueue();
+assert.equal(requests.length,0);
+cooldown=0;
+root.retryUntil=now-1;
+root.poll();
+requests[0].callback({ok:true,item:{uri:'A'}});
+assert.equal(root.retryUntil,0);
+assert.equal(requests.length,1);
+now+=15000;
+root.poll();
+requests[1].callback({ok:true,item:{uri:'B'}});
+assert.equal(requests[2].args[0],'queue');
+requests[2].callback({ok:true,upcoming:[]});
+now+=15000;
+root.poll();
+requests[3].callback({ok:true,item:{uri:'B'}});
+assert.equal(requests.length,4);
+""")
+
+    def test_bar_lyrics_do_not_fetch_artist_bios(self):
+        self.run_functions("app/TrackInfo.qml", ["refresh"], """
+const requests=[];
+const root={active:true,aboutWanted:false,item:{},revision:0,trackUri:'spotify:track:A',
+ artistId:'A',lyricsFor:'',aboutFor:'',player:{album:'Album',durationMs:3000},
+ api:{call(args,callback){requests.push({args,callback});}}};
+const Entity={firstArtist(){return 'Artist';},name(){return 'Song';}};
+INSTALL
+root.refresh();
+assert.deepEqual(requests.map(r=>r.args[0]),['lyrics']);
+root.aboutWanted=true;
+root.refresh();
+assert.deepEqual(requests.map(r=>r.args[0]),['lyrics','artist-about']);
+root.refresh();
+assert.equal(requests.length,2);
+""")
+
+    def test_hidden_home_and_library_wait_until_opened(self):
+        self.run_functions("app/HomePage.qml", ["load"], """
+const requests=[];
+const root={active:false,revision:0,loading:false,home:null,error:'',
+ app:{service:{api:{signedIn:true,call(args,callback){requests.push({args,callback});}}}}};
+INSTALL
+root.load();
+assert.equal(requests.length,0);
+root.active=true;
+root.load();
+assert.equal(requests.length,1);
+""")
+        self.run_functions("LibraryView.qml", ["emptySources", "nextKind", "load"], """
+const requests=[];
+const root={active:false,revision:0,loading:false,initialized:false,freshPages:false,retries:0,
+ error:'',filter:'',kinds:['playlist','album','artist'],
+ api:{signedIn:true,call(args,callback){requests.push({args,callback});}}};
+const retryTimer={stop(){}};
+INSTALL
+root.load(true);
+assert.equal(requests.length,0);
+root.active=true;
+root.load(true);
+assert.equal(requests.length,1);
+""")
+
+    def test_device_list_stops_requests_when_host_is_closed(self):
+        self.run_functions("DevicesView.qml", ["refresh"], """
+const requests=[];
+const root={active:false,revision:0,loading:false,devices:[],error:'',
+ api:{signedIn:true,call(args,callback){requests.push({args,callback});}}};
+INSTALL
+root.refresh();
+assert.equal(requests.length,0);
+root.active=true;
+root.refresh();
+root.refresh();
+assert.equal(requests.length,1);
+requests[0].callback({ok:true,devices:[]});
+root.active=false;
+root.refresh();
+assert.equal(requests.length,1);
+""")
+
+    def test_large_collection_only_queries_visible_likes(self):
+        self.run_functions("app/CollectionPage.qml", ["queryVisibleLikes"], """
+const batches=[];
+const root={active:true,viewMode:'list',displayed:Array.from({length:5000},(_,i)=>({uri:'spotify:track:'+i})),
+ app:{service:{likes:{query(uris){batches.push(uris);}}}}};
+const tracks={isLiked:false};
+const list={contentY:0,height:600,indexAt(x,y){return Math.floor(y/56);}};
+INSTALL
+root.queryVisibleLikes();
+assert.ok(batches[0].length<=12);
+list.contentY=4900*56;
+root.queryVisibleLikes();
+assert.equal(batches[1][0],'spotify:track:4900');
+assert.ok(batches[1].length<=12);
+root.active=false;
+root.queryVisibleLikes();
+assert.equal(batches.length,2);
+root.active=true;
+tracks.isLiked=true;
+root.queryVisibleLikes();
+assert.equal(batches.length,2);
+""")
+
+    def test_collapsed_history_groups_do_not_query_likes(self):
+        self.run_functions("app/HistoryPage.qml", ["queryLikes"], """
+const batches=[];
+const root={active:true,expanded:{},days:[{date:'2026-10-02',groups:[
+ {tracks:[{uri:'spotify:track:A'}]},{tracks:[{uri:'spotify:track:B'}]}
+]}],app:{service:{likes:{query(uris){batches.push(uris);}}}}};
+INSTALL
+root.queryLikes();
+assert.deepEqual(batches[0],[]);
+root.expanded={'2026-10-02/1':true};
+root.queryLikes();
+assert.deepEqual(batches[1],['spotify:track:B']);
+root.active=false;
+root.queryLikes();
+assert.equal(batches.length,2);
+""")
+
+    def test_like_cache_ages_are_preserved_per_item(self):
+        self.run_functions("Likes.qml", ["set"], """
+Date.now=()=>1000000;
+const root={known:{},checkedAt:{}};
+INSTALL
+root.set({A:true,B:false},true,{A:899,B:1});
+assert.equal(root.checkedAt.A,101000);
+assert.equal(root.checkedAt.B,999000);
 """)
 
     def test_session_change_resets_before_reenabling_signed_in_views(self):

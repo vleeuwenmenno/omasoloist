@@ -157,12 +157,14 @@ Item {
         api: spotifyApi
         player: root.player
         active: root.windowOpen || root.activeViewers > 0 || root.labelMode === "lyrics"
+        aboutWanted: root.windowOpen
     }
 
     Likes {
         id: likeState
         api: spotifyApi
         currentUri: root.player && root.player.item ? root.player.item.uri || "" : ""
+        currentWanted: root.windowOpen || root.activeViewers > 0
     }
 
     // ------------------------------------------------------------ quality
@@ -263,11 +265,11 @@ Item {
         }
     }
 
-    // Catch likes made in other Spotify apps.
+    // Catch likes made in other Spotify apps while a like button is visible.
     Timer {
-        interval: 30000
+        interval: likeState.freshnessMs
         repeat: true
-        running: spotifyApi.signedIn && root.ready
+        running: spotifyApi.signedIn && root.ready && likeState.currentWanted
         onTriggered: likeState.refreshCurrent()
     }
     Connections {

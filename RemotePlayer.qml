@@ -12,6 +12,9 @@ Item {
     // Poll while this is true (Soloist isn't the active device).
     property bool polling: false
     property bool fast: false
+    // Progress is interpolated locally; hidden or idle players need few reads.
+    readonly property int pollInterval: fast ? (playing ? 15000 : 60000)
+        : (active && playing ? 60000 : 5 * 60000)
     property string likedSongsUri: ""
 
     property bool active: false
@@ -90,15 +93,20 @@ Item {
 
     function poll() {
         if (!polling || pollBusy || Date.now() < retryUntil) return;
+        if (api.waitFor("/me/player") > 0) return;
         pollBusy = true;
         var requestedRevision = revision;
         api.call(["player"], function(result) {
             if (requestedRevision !== root.revision) return;
             root.pollBusy = false;
             if (result.rateLimited) root.retryUntil = Date.now() + result.retryAfter * 1000;
+            if (!result.ok) return;
+            root.retryUntil = 0;
+            var previousUri = root.item ? root.item.uri : "";
             root.apply(result);
+            if ((root.item ? root.item.uri : "") !== previousUri) root.lastQueuePoll = 0;
+            if (root.active && root.queueWanted && Date.now() - root.lastQueuePoll >= 60000) root.refreshQueue();
         });
-        if (queueWanted && Date.now() - lastQueuePoll >= 15000) refreshQueue();
     }
     property bool pollBusy: false
     property bool queueBusy: false
@@ -108,6 +116,7 @@ Item {
 
     function refreshQueue() {
         if (!polling || queueBusy || Date.now() < retryUntil) return;
+        if (api.waitFor("/me/player/queue") > 0) return;
         queueBusy = true;
         lastQueuePoll = Date.now();
         var requestedRevision = revision;
@@ -156,9 +165,11 @@ Item {
     }
 
     onPollingChanged: if (polling) poll()
+    onFastChanged: if (fast) poll()
 
     Timer {
-        interval: Math.max(root.fast ? 3000 : 10000, root.retryUntil - Date.now())
+        // A Retry-After is checked by poll(), not used as a repeating interval.
+        interval: root.pollInterval
         repeat: true
         running: root.polling
         onTriggered: root.poll()

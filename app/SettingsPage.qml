@@ -557,7 +557,30 @@ Flickable {
             text: root.cache && root.cache.stats ? "Spotify requests: " + (root.cache.stats.requests || 0)
                 + " · Served from cache: " + (root.cache.stats.cacheHits || 0)
                 + " · Rate-limit responses: " + (root.cache.stats.rateLimited || 0)
+                + " · Blocked locally during cooldown: " + (root.cache.stats.cooldownSkips || 0)
                 + "\nCounts since " + (root.cache.stats.since ? new Date(root.cache.stats.since * 1000).toLocaleDateString() : "first request") : ""
+            color: root.app.dim
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+        }
+
+        Text {
+            visible: root.cache !== null && !!root.cache.stats && !!root.cache.stats.endpoints
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: {
+                var stats = root.cache ? root.cache.stats : null;
+                if (!stats || !stats.endpoints) return "";
+                var endpoints = stats.endpoints;
+                var busiest = Object.keys(endpoints).sort(function(a, b) {
+                    return (endpoints[b].requests || 0) - (endpoints[a].requests || 0);
+                }).filter(function(key) { return endpoints[key].requests > 0; }).slice(0, 5);
+                var hour = Math.floor(Date.now() / 3600000) * 3600;
+                var current = (stats.hours || []).filter(function(h) { return h.start === hour; });
+                return "Requests this hour: " + (current.length ? current[0].requests : 0)
+                    + "\nBusiest endpoints since " + new Date(stats.breakdownSince * 1000).toLocaleString()
+                    + busiest.map(function(key) { return "\n" + key + ": " + endpoints[key].requests; }).join("");
+            }
             color: root.app.dim
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall

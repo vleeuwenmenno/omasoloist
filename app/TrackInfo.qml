@@ -10,6 +10,7 @@ Item {
     required property var api
     required property var player
     property bool active: false
+    property bool aboutWanted: false
 
     readonly property var item: player ? player.item : null
     readonly property string trackUri: item ? item.uri || "" : ""
@@ -59,7 +60,7 @@ Item {
                 if (!result.ok) root.retryLyrics.restart();
             });
         }
-        if (artistId !== "" && artistId !== aboutFor) {
+        if (aboutWanted && artistId !== "" && artistId !== aboutFor) {
             var id = artistId;
             aboutFor = id;
             about = null;
@@ -81,6 +82,7 @@ Item {
     }
 
     onActiveChanged: refresh()
+    onAboutWantedChanged: refresh()
     onTrackUriChanged: refresh()
     onArtistIdChanged: refresh()
 

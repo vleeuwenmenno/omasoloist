@@ -244,22 +244,60 @@ instead, turn off **Settings > App window > Open as a floating window**.
 
 ## Cache and request limits
 
-**Settings > Cache** shows storage use, request counters and active Spotify
-cooldowns. You can clear individual groups or all cached content. Clearing does
-not remove your sign-in, request history, pacing budget or cooldowns. Views reload
+**Settings > Cache** shows storage use, request counters, the busiest endpoints,
+requests this hour and active Spotify cooldowns. Endpoint counters start with
+the first request after this update; existing totals are retained. The local
+`~/.local/state/omasoloist/request-stats.json` also keeps 48 hourly request buckets
+and the last 429's endpoint, reason and `Retry-After`. Search terms, item IDs and
+tokens are not logged. You can clear individual groups or all cached content.
+Clearing does not remove your sign-in, request history, pacing budget or cooldowns. Views reload
 after clearing; pending responses cannot restore data invalidated by a mutation.
 
 Web API responses are isolated by sign-in session. Concurrent helpers share one
 fetch for each cached URL, and token refreshes retain the session's cache. Likes
-are cached for 30 seconds; live playback state is not cached. Failed capability
-checks for Spotify's editorial playlists are remembered for five minutes.
+are cached per URI for 15 minutes, so overlapping pages and app restarts reuse
+the same answer. Changing one like updates that entry and invalidates affected
+batch responses while preserving unrelated per-URI answers. Current-track likes are checked only while the window or popup
+is open, so likes made in other apps are refreshed on a 15-minute interval.
+Live playback state is not cached. Failed capability checks for Spotify's
+editorial playlists are remembered for five minutes.
+
+| Data | Freshness and reuse |
+|---|---|
+| Library lists and playlist metadata | 5 minutes; explicit library refresh bypasses the cache |
+| Playlist track pages | 7 days per `snapshot_id`; metadata is checked on access after 5 minutes, and a changed version loads new pages |
+| Albums and tracks | 7 days; album pages reuse embedded tracks before requesting another page |
+| Artists / search / top items | 1 day / 1 hour / 6 hours |
+| Like status | 15 minutes per URI; local changes update immediately |
+
+Collections check likes only near the visible rows, and Recents checks expanded
+groups. Sorting a large playlist still needs all its track pages on the first
+load, but does not fetch like status for every track. Paging stops when its view
+is hidden and uses source offsets so removed tracks cannot cause repeated pages.
+Playlist edits keep other playlists' versioned pages. If a different version is
+observed during paging, the view asks you to reopen instead of combining versions.
+
+An offline 5,000-track regression scenario uses 101 Web API requests on its first
+full load (100 pages and metadata), zero for a repeat within five minutes, and
+one metadata request after that when the snapshot is unchanged and the pages
+are still within their seven-day lifetime. These are simulated request counts,
+not a guarantee about Spotify's quota or a measured production workload.
 
 The helper serializes Web API requests, spaces their starts by at least 350 ms,
 and allows at most 20 requests per rolling 30 seconds. Four slots are reserved
 for direct controls rather than reads or bulk queue additions. These are local
 pacing choices, not Spotify's published limits. Remote playback polls every
-3 seconds while a view is open and every 10 seconds otherwise; its queue is
-polled at most every 15 seconds unless a user action requests a refresh.
+15 seconds while playing with a view open, every minute while playing with no
+view open or paused with a view open, and every five minutes when idle with no
+view open. Progress is interpolated locally. Opening a view and using controls
+request an immediate update. The remote queue refreshes on track changes and
+user actions, and at most once a minute otherwise while visible. Local Soloist
+playback uses its event stream instead of Web API polling.
+
+Home and the library load only when shown. The device list refreshes when opened
+and once a minute while shown; closing its host stops polling. Bar lyrics do not
+fetch artist bios; those load only while the app window is open. History still
+syncs every 30 minutes.
 
 A 429 immediately records the full `Retry-After` deadline without automatically
 retrying. General rate limits apply across the Web API. Development quotas share

@@ -10,8 +10,10 @@ Item {
 
     // Saved/removed something other than a track (album, playlist, artist).
     signal libraryChanged(string uri)
-    // The playing track, always kept up to date.
+    // The playing track only needs a lookup while a like button is visible.
     property string currentUri: ""
+    property bool currentWanted: false
+    readonly property int freshnessMs: 15 * 60 * 1000
 
     property var known: ({})
     property var pending: ({})
@@ -30,7 +32,8 @@ Item {
         var times = Object.assign({}, checkedAt);
         for (var uri in values) {
             next[uri] = values[uri];
-            times[uri] = fresh === false ? 0 : Date.now() - (age || 0) * 1000;
+            var seconds = age && typeof age === "object" ? age[uri] || 0 : age || 0;
+            times[uri] = fresh === false ? 0 : Date.now() - seconds * 1000;
         }
         checkedAt = times;
         known = next;
@@ -42,7 +45,7 @@ Item {
         if (api.waitFor("/me/library/contains") > 0) return;
         var missing = (uris || []).filter(function(u) {
             return u && u.indexOf("spotify:") === 0 && !root.pending[u] && !root.checking[u]
-                && (!(u in root.known) || Date.now() - (root.checkedAt[u] || 0) >= 30000);
+                && (!(u in root.known) || Date.now() - (root.checkedAt[u] || 0) >= root.freshnessMs);
         });
         missing = missing.filter(function(u, i) { return missing.indexOf(u) === i; });
         if (missing.length === 0) return;
@@ -63,7 +66,7 @@ Item {
                 if (!root.pending[uri] && (root.versions[uri] || 0) === (requestedVersions[uri] || 0))
                     values[uri] = result.liked[uri];
             }
-            root.set(values, !result.stale, result.cacheAge || 0);
+            root.set(values, !result.stale, result.ages || result.cacheAge || 0);
         });
     }
 
@@ -102,10 +105,11 @@ Item {
         });
     }
 
-    onCurrentUriChanged: if (currentUri !== "") query([currentUri])
+    onCurrentUriChanged: refreshCurrent()
+    onCurrentWantedChanged: refreshCurrent()
     // Liked state may have changed elsewhere; recheck the playing track.
     function refreshCurrent() {
-        if (currentUri === "" || !api || !api.signedIn) return;
+        if (!currentWanted || currentUri === "" || !api || !api.signedIn) return;
         query([currentUri]);
     }
 

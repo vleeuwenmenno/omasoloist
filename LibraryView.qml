@@ -19,6 +19,7 @@ Item {
 
     // The app window embeds these views without the popup's back button.
     property bool showBack: true
+    property bool active: visible
 
     signal back()
     signal openCollection(var collection)
@@ -44,9 +45,9 @@ Item {
     readonly property bool loadedAll: kinds.every(function(k) { return root.sources[k].done; })
 
     function emptySources() {
-        return { playlist: { items: [], done: false, cursor: "" },
-                 album: { items: [], done: false, cursor: "" },
-                 artist: { items: [], done: false, cursor: "" } };
+        return { playlist: { items: [], done: false, cursor: "", offset: 0 },
+                 album: { items: [], done: false, cursor: "", offset: 0 },
+                 artist: { items: [], done: false, cursor: "", offset: 0 } };
     }
 
     Timer {
@@ -82,12 +83,12 @@ Item {
             freshPages = !!fresh;
             retryTimer.stop();
         }
-        if (!api || !api.signedIn) return;
+        if (!active || !api || !api.signedIn) return;
         var kind = nextKind();
         if (loading || kind === "") return;
         var source = sources[kind];
-        var args = kind === "playlist" ? ["playlists", String(source.items.length)]
-            : kind === "album" ? ["saved-albums", String(source.items.length)]
+        var args = kind === "playlist" ? ["playlists", String(source.offset)]
+            : kind === "album" ? ["saved-albums", String(source.offset)]
             : ["followed-artists", source.cursor];
         loading = true;
         initialized = true;
@@ -104,9 +105,12 @@ Item {
             }
             root.retries = 0;
             var next = Object.assign({}, root.sources);
+            var offset = result.nextOffset !== undefined ? result.nextOffset : source.offset + result.items.length;
+            var advanced = kind === "artist" ? result.cursor && result.cursor !== source.cursor : offset > source.offset;
             next[kind] = {
                 items: source.items.concat(result.items.map(function(p) { return Object.assign({ kind: kind }, p); })),
-                done: !result.next,
+                done: !result.next || !advanced,
+                offset: offset,
                 cursor: result.cursor || ""
             };
             root.sources = next;
@@ -116,13 +120,9 @@ Item {
         });
     }
 
-    // The app window creates this view already visible, so load on
-    // completion too; the popup loads when it is first opened.
-    // Load as soon as sign-in is known, visible or not: the app window
-    // builds this view hidden at shell start, often before the sign-in
-    // check finishes, and a hidden item may never see a visibility change.
-    // Answers are cached, so an early load costs nothing.
-    onVisibleChanged: ensureLoaded()
+    // The window can construct this view while unmapped. Wait until its
+    // host is open before fetching; expired disk entries cost API requests.
+    onActiveChanged: ensureLoaded()
     Component.onCompleted: ensureLoaded()
     function ensureLoaded() { if (!initialized && !loading) load(true); }
 

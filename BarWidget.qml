@@ -317,6 +317,7 @@ Ui.BarWidget {
 
         LibraryView {
             id: libraryView
+            active: root.popupOpen && visible
             visible: root.view === "library" && root.ready
             anchors.fill: parent
             bar: root.bar
@@ -335,6 +336,7 @@ Ui.BarWidget {
 
         CollectionView {
             id: collectionView
+            active: root.popupOpen && visible
             visible: root.view === "collection" && root.ready
             anchors.fill: parent
             bar: root.bar
@@ -348,6 +350,7 @@ Ui.BarWidget {
 
         DevicesView {
             id: devicesView
+            active: root.popupOpen && visible
             visible: root.view === "devices"
             anchors.fill: parent
             bar: root.bar

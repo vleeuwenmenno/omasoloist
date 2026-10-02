@@ -54,6 +54,8 @@ SCOPES = " ".join([
 ])
 LOGIN_TIMEOUT = 300
 PAGE_SIZE = 50
+LEGACY_PLAYLIST_FIELDS = "uri,id,name,description,images,owner(display_name,id),collaborative"
+PLAYLIST_FIELDS = LEGACY_PLAYLIST_FIELDS + ",snapshot_id"
 
 HOME = os.path.expanduser("~")
 USER_AGENT = "omasoloist/0.2 (https://github.com/vleeuwenmenno/omasoloist)"
@@ -247,14 +249,14 @@ def access_token():
 
 
 # GET responses cached on disk, by path prefix (seconds). Live playback is
-# never cached; likes are shared for 30 seconds. Set
+# never cached; likes are shared for 15 minutes. Set
 # OMASOLOIST_FRESH=1 to bypass reads.
 API_CACHE = [
     # The popup and the window both list devices; share one answer.
     ("/me/player/devices", 5),
     ("/me/player/recently-played", 120),
     ("/me/player", 0),
-    ("/me/library/contains", 30),
+    ("/me/library/contains", 15 * 60),
     ("/me/albums", 300),
     ("/me/following", 300),
     ("/me/library", 0),
@@ -270,7 +272,7 @@ API_CACHE = [
 ]
 
 
-def api_cache_slot(method, path, url, session=None):
+def api_cache_slot(method, path, url, session=None, snapshot=""):
     if method != "GET" or path.startswith("https://"):
         return None, 0
     for prefix, ttl in API_CACHE:
@@ -279,6 +281,10 @@ def api_cache_slot(method, path, url, session=None):
                 return None, 0
             group = prefix.strip("/").replace("/", "_") or "root"
             name = hashlib.sha1(url.encode()).hexdigest() + ".json"
+            if snapshot and path.startswith("/playlists/"):
+                ident = path.split("/")[2]
+                name = playlist_snapshot_prefix(ident) + hashlib.sha1((url + "\n" + snapshot).encode()).hexdigest() + ".json"
+                ttl = 7 * 86400
             return os.path.join(CACHE_DIR, "api", group, session or api_session(), name), ttl
     return None, 0
 
@@ -291,15 +297,17 @@ def forget_cached(prefix):
         shutil.rmtree(group, ignore_errors=True)
 
 
-def api(method, path, params=None, body=None, retry=True):
+def api(method, path, params=None, body=None, retry=True, cache_info=None, snapshot=""):
     requested_at = time.time()
+    if cache_info is not None:
+        cache_info.update(checkedAt=requested_at, stale=False)
     session = api_session()  # Validate sign-in before serving any cached response.
     if RESPONSE_META.setdefault("session", session) != session:
         raise HelperError("Spotify sign-in changed. Try again.")
     url = path if path.startswith("https://") else API_URL + path
     if params:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(sorted(params.items()))
-    slot, ttl = api_cache_slot(method, path, url, session)
+    slot, ttl = api_cache_slot(method, path, url, session, snapshot)
     if not slot:
         result = api_request(method, path, url, params, body, retry)
         if api_session() != session:
@@ -321,13 +329,15 @@ def api(method, path, params=None, body=None, retry=True):
                 if not os.environ.get("OMASOLOIST_FRESH") or refreshed_while_waiting:
                     hit = fresh_json(slot, ttl)
                     if hit is not None:
+                        if cache_info is not None:
+                            cache_info["checkedAt"] = os.path.getmtime(slot)
                         RESPONSE_META["cacheAge"] = max(RESPONSE_META.get("cacheAge", 0),
                                                         max(0, time.time() - os.path.getmtime(slot)))
-                        request_stat("cacheHits")
+                        request_stat("cacheHits", method, path)
                         return hit
                 failure = fresh_json(slot + ".error", 300)
                 if failure:
-                    request_stat("capabilityHits")
+                    request_stat("capabilityHits", method, path)
                     raise ApiError(failure["message"], failure["status"])
             try:
                 result = api_request(method, path, url, params, body, retry)
@@ -336,11 +346,13 @@ def api(method, path, params=None, body=None, retry=True):
                     if api_session() != session or epoch != cache_epoch("api", group):
                         raise
                     stale = read_json(slot, None)
+                    if stale is not None and cache_info is not None:
+                        cache_info.update(checkedAt=os.path.getmtime(slot), stale=True)
                 if stale is None:
                     raise
                 RESPONSE_META["stale"] = True
                 RESPONSE_META["limits"] = active_limits()
-                request_stat("staleHits")
+                request_stat("staleHits", method, path)
                 return stale
             except ApiError as error:
                 # Only remember known editorial-playlist capability failures.
@@ -356,6 +368,8 @@ def api(method, path, params=None, body=None, retry=True):
                 if epoch != cache_epoch("api", group):
                     continue  # A mutation or Clear finished while this read was pending.
                 write_private_json(slot, result)
+                if cache_info is not None:
+                    cache_info["checkedAt"] = os.path.getmtime(slot)
                 return result
     raise HelperError("Spotify data changed while loading. Try again.")
 
@@ -369,12 +383,36 @@ def fresh_json(path, ttl):
     return None
 
 
-def request_stat(name):
+def request_endpoint(method, path):
+    # Keep diagnostics useful without storing search terms, URIs or user IDs.
+    path = urllib.parse.urlsplit(path).path.removeprefix("/v1")
+    path = re.sub(r"^/(albums|artists|playlists|tracks|users|shows|episodes|audiobooks|chapters)/[^/]+", r"/\1/:id", path)
+    return method + " " + path
+
+
+def request_stat(name, method="", path="", **detail):
     with state_lock("request-stats"):
-        path = os.path.join(STATE_DIR, "request-stats.json")
-        stats = read_json(path, {"since": time.time()})
+        file = os.path.join(STATE_DIR, "request-stats.json")
+        now = time.time()
+        stats = read_json(file, {"since": now})
         stats[name] = stats.get(name, 0) + 1
-        write_private_json(path, stats)
+        if method and path:
+            stats.setdefault("breakdownSince", now)
+            endpoint = request_endpoint(method, path)
+            counts = stats.setdefault("endpoints", {}).setdefault(endpoint, {})
+            counts[name] = counts.get(name, 0) + 1
+            if name == "requests":
+                hour = int(now // 3600) * 3600
+                hours = [h for h in stats.get("hours", []) if hour - 47 * 3600 <= h["start"] <= hour]
+                if not hours or hours[-1]["start"] != hour:
+                    hours.append({"start": hour, "requests": 0, "endpoints": {}})
+                bucket = hours[-1]
+                bucket["requests"] += 1
+                bucket["endpoints"][endpoint] = bucket["endpoints"].get(endpoint, 0) + 1
+                stats["hours"] = hours
+            elif name == "rateLimited":
+                stats["lastRateLimit"] = {"at": now, "endpoint": endpoint, **detail}
+        write_private_json(file, stats)
 
 
 # General limits are app-wide. Development quotas belong to the developer
@@ -407,6 +445,7 @@ def note_rate_limit(path, seconds, reason=""):
         deadline = time.time() + seconds
         if deadline >= previous.get("deadline", 0):
             write_private_json(file, {"deadline": deadline, "scope": "global", "reason": reason,
+                                      "receivedAt": time.time(), "retryAfter": seconds,
                                       "endpoint": path.split("?")[0].removeprefix(API_URL)})
 
 
@@ -433,6 +472,7 @@ def request_turn(method, path):
         with state_lock("spotify-request"):
             wait = rate_limit_wait(path)
             if wait > 0:
+                request_stat("cooldownSkips", method, path)
                 raise rate_limit_error(wait)
             now = time.time()
             budget = read_json(file, {})
@@ -464,7 +504,7 @@ def send_api_request(method, path, url, body):
     if data is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, method=method, headers=headers)
-    request_stat("requests")
+    request_stat("requests", method, path)
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             raw = read_limited(response, LIMIT_API, "Spotify API response")
@@ -486,7 +526,7 @@ def send_api_request(method, path, url, body):
             except (ValueError, AttributeError):
                 reason = ""
             note_rate_limit(path, retry_after, reason)
-            request_stat("rateLimited")
+            request_stat("rateLimited", method, path, retryAfter=retry_after, reason=reason)
             raise rate_limit_error(rate_limit_wait(path), reason) from None
         detail = read_error_body(error)
         try:
@@ -657,8 +697,12 @@ def shape_track(track, added_at=None):
     }
 
 
-def page(items, total, offset):
-    return {"items": items, "total": total, "offset": offset, "next": offset + len(items) < total}
+def page(items, total, offset, count=None):
+    # Removed, local or unsupported items may be filtered out of the UI.
+    # Advance by Spotify's page size, not the remaining display rows.
+    count = len(items) if count is None else count
+    return {"items": items, "total": total, "offset": offset, "nextOffset": offset + count,
+            "next": count > 0 and offset + count < total}
 
 
 # ------------------------------------------------------------------ commands
@@ -808,7 +852,7 @@ def cmd_playlists(args):
             "cover": pick_image(playlist.get("images"), 64),
             "count": counter.get("total", 0) if isinstance(counter, dict) else 0,
         })
-    return page(items, data.get("total", len(items)), offset)
+    return page(items, data.get("total", len(items)), offset, len(data.get("items") or []))
 
 
 def cmd_saved_albums(args):
@@ -816,7 +860,7 @@ def cmd_saved_albums(args):
     offset = int(args[0]) if args else 0
     data = api("GET", "/me/albums", {"limit": PAGE_SIZE, "offset": offset})
     items = [x for x in (shape_album(entry.get("album")) for entry in data.get("items") or [] if entry) if x]
-    return page(items, data.get("total", len(items)), offset)
+    return page(items, data.get("total", len(items)), offset, len(data.get("items") or []))
 
 
 def cmd_followed_artists(args):
@@ -838,7 +882,7 @@ def cmd_liked(args):
     items = [shape_track(entry.get("track"), entry.get("added_at"))
              for entry in data.get("items") or [] if entry]
     items = [t for t in items if t]
-    return page(items, data.get("total", len(items)), offset)
+    return page(items, data.get("total", len(items)), offset, len(data.get("items") or []))
 
 
 def cmd_playlist_tracks(args):
@@ -847,15 +891,20 @@ def cmd_playlist_tracks(args):
     playlist_id = urllib.parse.quote(args[0], safe="")
     offset = int(args[1]) if len(args) > 1 else 0
     params = {"limit": PAGE_SIZE, "offset": offset}
+    try:
+        metadata = {} if args[0].startswith("37i9") else playlist_info(playlist_id)
+    except HelperError:
+        metadata = {}
+    snapshot = metadata.get("snapshot_id") or ""
     # Newer API revisions serve playlist entries from /items; fall back to
     # the older /tracks path when that is all the account can use.
     try:
-        data = api("GET", f"/playlists/{playlist_id}/items", params)
+        data = api("GET", f"/playlists/{playlist_id}/items", params, snapshot=snapshot)
     except HelperError as error:
         if "(404)" not in str(error) and "(403)" not in str(error):
             raise
         try:
-            data = api("GET", f"/playlists/{playlist_id}/tracks", params)
+            data = api("GET", f"/playlists/{playlist_id}/tracks", params, snapshot=snapshot)
         except HelperError:
             # Spotify's own editorial/algorithmic playlists (ids "37i9…") are
             # hidden from development-mode apps, but still play fine.
@@ -869,14 +918,36 @@ def cmd_playlist_tracks(args):
         track = shape_track(entry.get("item") or entry.get("track"), entry.get("added_at"))
         if track:
             items.append(track)
-    result = page(items, data.get("total", len(items)), offset)
-    if offset == 0:
-        try:
-            result["meta"] = shape_playlist(api("GET", f"/playlists/{playlist_id}",
-                                                {"fields": "uri,id,name,description,images,owner(display_name,id),collaborative"}))
-        except HelperError:
-            pass
+    result = page(items, data.get("total", len(items)), offset, len(data.get("items") or []))
+    result["snapshot"] = snapshot
+    if offset == 0 and metadata:
+        result["meta"] = shape_playlist(metadata)
     return result
+
+
+def playlist_info(ident):
+    try:
+        return api("GET", f"/playlists/{ident}", {"fields": PLAYLIST_FIELDS})
+    except RateLimited:
+        # Preserve cached cards from before snapshot-aware paging was added.
+        return api("GET", f"/playlists/{ident}", {"fields": LEGACY_PLAYLIST_FIELDS})
+
+
+def playlist_snapshot_prefix(ident):
+    return "snapshot-" + hashlib.sha1(ident.encode()).hexdigest() + "-"
+
+
+def forget_playlist(ident):
+    # Metadata needs revalidation after editing. Keep other playlists' large
+    # versioned pages; their next metadata check will decide whether to reuse.
+    with state_lock("cache-epochs"):
+        bump_cache_epoch("api", "playlists")
+        group = os.path.join(CACHE_DIR, "api", "playlists")
+        prefix = playlist_snapshot_prefix(ident)
+        for folder, _dirs, names in os.walk(group):
+            for name in names:
+                if not name.startswith("snapshot-") or name.startswith(prefix):
+                    os.unlink(os.path.join(folder, name))
 
 
 def shape_device(device):
@@ -1062,7 +1133,11 @@ def cmd_album_tracks(args):
     album_id = urllib.parse.quote(args[0], safe="")
     offset = int(args[1]) if len(args) > 1 else 0
     album = api("GET", f"/albums/{album_id}")
-    data = api("GET", f"/albums/{album_id}/tracks", {"limit": PAGE_SIZE, "offset": offset})
+    embedded = album.get("tracks") or {}
+    if embedded.get("items") and embedded.get("offset", 0) == offset:
+        data = embedded
+    else:
+        data = api("GET", f"/albums/{album_id}/tracks", {"limit": PAGE_SIZE, "offset": offset})
     items = []
     for track in data.get("items") or []:
         if track:
@@ -1071,7 +1146,7 @@ def cmd_album_tracks(args):
             if shaped:
                 items.append(shaped)
     # Name and art, for pages opened from a bare URI.
-    return dict(page(items, data.get("total", len(items)), offset), meta=shape_album(album))
+    return dict(page(items, data.get("total", len(items)), offset, len(data.get("items") or [])), meta=shape_album(album))
 
 
 def artist_overview(artist_id):
@@ -1390,8 +1465,7 @@ def resolve_context(uri, albums):
             return shape_artist(api("GET", "/artists/" + ident))
         if ident.startswith("37i9"):
             return public_playlist(public_page_entity("playlist", ident))
-        return shape_playlist(api("GET", "/playlists/" + ident,
-                                  {"fields": "uri,id,name,description,images,owner(display_name,id),collaborative"}))
+        return shape_playlist(playlist_info(ident))
     except HelperError:
         return None
 
@@ -1431,7 +1505,8 @@ def cmd_home(_args):
     with ThreadPoolExecutor(max_workers=6) as pool:
         recents = [x for x in pool.map(lambda u: resolve_context(u, albums), order[:20]) if x]
 
-    playlists = [x for x in (shape_playlist(p) for p in section("/me/playlists", {"limit": 10})) if x]
+    # Share the sidebar's first page instead of caching another URL for ten items.
+    playlists = [x for x in (shape_playlist(p) for p in section("/me/playlists", {"limit": PAGE_SIZE, "offset": 0})[:10]) if x]
     liked = {"kind": "liked", "uri": "", "name": "Liked Songs", "owner": "Playlist", "cover": ""}
     shortcuts = [liked]
     for item in recents + playlists:
@@ -1666,24 +1741,86 @@ def cmd_liked_contains(args):
     separately so one refused type (artists need the follow scopes) doesn't
     fail the rest.
     """
-    api_session()
-    by_type = {}
-    for uri in dict.fromkeys(u for u in args if u.startswith("spotify:")):
-        by_type.setdefault(uri.split(":")[1], []).append(uri)
-    liked = {}
-    for uris in by_type.values():
-        for start in range(0, len(uris), 40):
-            chunk = uris[start:start + 40]
-            try:
-                answer = api("GET", "/me/library/contains", {"uris": ",".join(chunk)})
-            except RateLimited as error:
-                RESPONSE_META.update({"limits": active_limits(), "retryAfter": max(1, int(error.seconds + 1)),
-                                      "partial": True})
-                continue
-            except HelperError:
-                continue
-            liked.update(zip(chunk, answer if isinstance(answer, list) else []))
-    return {"liked": liked}
+    session = api_session()
+    if RESPONSE_META.setdefault("session", session) != session:
+        raise HelperError("Spotify sign-in changed. Try again.")
+    wanted = sorted(set(u for u in args if u.startswith("spotify:")))
+    # Different views ask about overlapping batches. Share the saved status
+    # of each URI across batches, processes and app restarts.
+    with state_lock("liked-items:" + session):
+        for _attempt in range(2):
+            with state_lock("cache-epochs"):
+                epoch = cache_epoch("api", "me_library_contains")
+                records = {uri: read_json(liked_item_slot(session, uri), {}) for uri in wanted}
+            found, by_type = {}, {}
+            for uri, record in records.items():
+                if (not os.environ.get("OMASOLOIST_FRESH") and isinstance(record.get("liked"), bool)
+                        and time.time() - record.get("checkedAt", 0) < 15 * 60):
+                    found[uri] = record
+                else:
+                    by_type.setdefault(uri.split(":")[1], []).append(uri)
+            if found:
+                request_stat("cacheHits", "GET", "/me/library/contains")
+            limited = changed = False
+            for uris in by_type.values():
+                for start in range(0, len(uris), 40):
+                    chunk = uris[start:start + 40]
+                    info = {}
+                    try:
+                        answer = api("GET", "/me/library/contains", {"uris": ",".join(chunk)}, cache_info=info)
+                    except RateLimited as error:
+                        RESPONSE_META.update(limits=active_limits(), retryAfter=max(1, int(error.seconds + 1)), partial=True)
+                        limited = True
+                        break
+                    except HelperError:
+                        continue
+                    with state_lock("cache-epochs"):
+                        if api_session() != session:
+                            raise HelperError("Spotify sign-in changed. Try again.")
+                        if epoch != cache_epoch("api", "me_library_contains"):
+                            changed = True
+                            break
+                        for uri, value in zip(chunk, answer if isinstance(answer, list) else []):
+                            if isinstance(value, bool):
+                                found[uri] = {"liked": value, "checkedAt": info["checkedAt"]}
+                                write_private_json(liked_item_slot(session, uri), found[uri])
+                if limited or changed:
+                    break
+            with state_lock("cache-epochs"):
+                if api_session() != session:
+                    raise HelperError("Spotify sign-in changed. Try again.")
+                if changed or epoch != cache_epoch("api", "me_library_contains"):
+                    continue
+                if limited:
+                    stale = {uri: record for uri, record in records.items()
+                             if uri not in found and isinstance(record.get("liked"), bool)}
+                    if stale:
+                        found.update(stale)
+                        RESPONSE_META["stale"] = True
+                        request_stat("staleHits", "GET", "/me/library/contains")
+                return {"liked": {uri: r["liked"] for uri, r in found.items()},
+                        "ages": {uri: max(0, time.time() - r["checkedAt"]) for uri, r in found.items()}}
+    raise HelperError("Spotify data changed while loading. Try again.")
+
+
+def liked_item_slot(session, uri):
+    return os.path.join(CACHE_DIR, "api", "me_library_contains", session,
+                        "item-" + hashlib.sha1(uri.encode()).hexdigest() + ".json")
+
+
+def remember_like(uri, on):
+    """Invalidate batches after a mutation, retaining unrelated per-item answers."""
+    session = api_session()
+    if RESPONSE_META.get("session", session) != session:
+        raise HelperError("Spotify sign-in changed. Try again.")
+    with state_lock("cache-epochs"):
+        bump_cache_epoch("api", "me_library_contains")
+        slot = liked_item_slot(session, uri)
+        folder = os.path.dirname(slot)
+        for name in os.listdir(folder) if os.path.isdir(folder) else []:
+            if not name.startswith("item-"):
+                os.unlink(os.path.join(folder, name))
+        write_private_json(slot, {"liked": on, "checkedAt": time.time()})
 
 
 def cmd_like(args):
@@ -1692,7 +1829,7 @@ def cmd_like(args):
         raise HelperError("Usage: like <uri> [on|off]")
     on = len(args) < 2 or args[1] != "off"
     api("PUT" if on else "DELETE", "/me/library", {"uris": args[0]})
-    forget_cached("/me/library/contains")
+    remember_like(args[0], on)
     kind = args[0].split(":")[1] if ":" in args[0] else ""
     prefix = {"track": "/me/tracks", "playlist": "/me/playlists",
               "album": "/me/albums", "artist": "/me/following"}.get(kind)
@@ -1736,7 +1873,7 @@ def cmd_add_to_playlist(args):
         if "(404)" not in str(error):
             raise
         api("POST", f"/playlists/{playlist_id}/tracks", body={"uris": uris})
-    forget_cached("/playlists/")
+    forget_playlist(playlist_id)
     forget_cached("/me/playlists")
     return {"added": len(uris)}
 

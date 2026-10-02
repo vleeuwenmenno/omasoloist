@@ -11,6 +11,7 @@ Flickable {
     id: root
 
     required property var app
+    readonly property bool active: visible && app.showsWindow
 
     property var days: []
     property bool loading: false
@@ -29,7 +30,7 @@ Flickable {
 
     function load(reset) {
         if (reset) { revision++; loading = false; loadingMore = false; days = []; next = 0; loaded = false; error = ""; }
-        if (loading || !app.service.api.signedIn) return;
+        if (!active || loading || !app.service.api.signedIn) return;
         loading = true;
         var requestedRevision = revision;
         app.service.api.call(["history"], function(result) {
@@ -39,14 +40,14 @@ Flickable {
             root.error = "";
             root.days = result.days;
             root.next = result.next || 0;
-            root.queryLikes(result.days);
+            root.queryLikes();
             root.loaded = true;
             root.loadedAt = Date.now();
         });
     }
 
     function loadMore() {
-        if (loadingMore || loading || !next) return;
+        if (!active || loadingMore || loading || !next) return;
         loadingMore = true;
         var requestedRevision = revision;
         app.service.api.call(["history", String(next)], function(result) {
@@ -55,18 +56,22 @@ Flickable {
             if (!result.ok) { root.error = result.error; return; }
             root.days = root.days.concat(result.days);
             root.next = result.next || 0;
-            root.queryLikes(result.days);
+            root.queryLikes();
         });
     }
 
-    function queryLikes(days) {
+    function queryLikes() {
+        if (!active) return;
         var uris = [];
-        days.forEach(function(d) { d.groups.forEach(function(g) { g.tracks.forEach(function(t) { uris.push(t.uri); }); }); });
+        days.forEach(function(d) { d.groups.forEach(function(g, i) {
+            if (root.expanded[d.date + "/" + i]) g.tracks.forEach(function(t) { uris.push(t.uri); });
+        }); });
         app.service.likes.query(uris);
     }
+    onExpandedChanged: queryLikes()
 
     // Fetch the next page before the end comes into view.
-    function nearEnd() { if (visible && loaded && next && contentY + height > contentHeight - 800) loadMore(); }
+    function nearEnd() { if (active && loaded && next && contentY + height > contentHeight - 800) loadMore(); }
     onContentYChanged: nearEnd()
     onContentHeightChanged: nearEnd()
 
@@ -104,13 +109,16 @@ Flickable {
                              function() { root.pendingUri = ""; });
     }
 
-    onVisibleChanged: if (visible && (!loaded || Date.now() - loadedAt > 2 * 60 * 1000)) load()
+    onActiveChanged: if (active) {
+        if (!loaded || Date.now() - loadedAt > 2 * 60 * 1000) load();
+        else queryLikes();
+    }
 
     Connections {
         target: root.app.service.api
         function onSessionReset() { root.load(true); }
-        function onSignedInChanged() { if (root.visible && root.app.service.api.signedIn) root.load(); }
-        function onCacheCleared(group) { if (group !== "lyrics" && root.visible) root.load(true); }
+        function onSignedInChanged() { if (root.active && root.app.service.api.signedIn) root.load(); }
+        function onCacheCleared(group) { if (group !== "lyrics") root.load(true); }
     }
 
     clip: true

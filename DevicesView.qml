@@ -16,6 +16,7 @@ Item {
 
     // The app window embeds these views without the popup's back button.
     property bool showBack: true
+    property bool active: visible
 
     signal back()
 
@@ -53,7 +54,7 @@ Item {
     }
 
     function refresh() {
-        if (!api.signedIn || loading) return;
+        if (!active || !api.signedIn || loading) return;
         loading = true;
         var requestedRevision = revision;
         api.call(["devices"], function(result) {
@@ -79,7 +80,8 @@ Item {
         });
     }
 
-    onVisibleChanged: if (visible) refresh()
+    onActiveChanged: if (active) refresh()
+    Component.onCompleted: if (active) refresh()
 
     Connections {
         target: root.api
@@ -90,21 +92,21 @@ Item {
             root.error = "";
             root.transferringId = "";
         }
-        function onSignedInChanged() { if (root.visible && root.api.signedIn) root.refresh(); }
+        function onSignedInChanged() { if (root.active && root.api.signedIn) root.refresh(); }
         function onCacheCleared(group) {
             if (group === "api" || group === "all") {
                 root.revision++;
                 root.loading = false;
                 root.devices = [];
-                if (root.visible) root.refresh();
+                if (root.active) root.refresh();
             }
         }
     }
 
     Timer {
-        interval: 10000
+        interval: 60000
         repeat: true
-        running: root.visible
+        running: root.active && root.api.signedIn
         onTriggered: root.refresh()
     }
 

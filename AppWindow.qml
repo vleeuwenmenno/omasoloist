@@ -826,6 +826,7 @@ Item {
                             anchors.fill: parent
                             anchors.margins: 12
                             showBack: false
+                            active: root.showsWindow && visible
                             visible: root.service !== null
                             bar: null
                             api: root.service.api
@@ -878,6 +879,7 @@ Item {
                         DevicesView {
                             anchors.fill: parent
                             anchors.margins: 12
+                            active: root.showsWindow && visible
                             visible: root.rightPanel === "devices"
                             showBack: false
                             bar: null

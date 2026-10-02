@@ -313,14 +313,61 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(network.call_count, 2)
             self.assertEqual(fallback.call_count, 2)
 
-    def test_like_refresh_observes_external_changes_after_thirty_seconds(self):
-        self.seed("/me/library/contains", [False], age=31, params={"uris": "spotify:track:A"})
-        with patch.object(s, "api_request", return_value=[True]):
+    def test_like_refresh_observes_external_changes_after_fifteen_minutes(self):
+        slot = self.seed("/me/library/contains", [False], age=31, params={"uris": "spotify:track:A"})
+        with patch.object(s, "api_request", return_value=[True]) as fetch:
+            self.assertFalse(s.cmd_liked_contains(["spotify:track:A"])["liked"]["spotify:track:A"])
+            fetch.assert_not_called()
+            os.utime(slot, (time.time() - 901, time.time() - 901))
+            s.write_private_json(s.liked_item_slot(s.api_session(), "spotify:track:A"),
+                                 {"liked": False, "checkedAt": time.time() - 901})
             self.assertTrue(s.cmd_liked_contains(["spotify:track:A"])["liked"]["spotify:track:A"])
+            fetch.assert_called_once()
+
+    def test_metrics_distinguish_network_cache_and_blocked_requests(self):
+        with patch.object(s.urllib.request, "urlopen", side_effect=[Response({"id": "A"}), self.error(seconds=600, reason="QUOTA_EXCEEDED")]) as network:
+            s.api("GET", "/albums/A", {"private": "not-for-logs"})
+            s.api("GET", "/albums/A", {"private": "not-for-logs"})
+            with self.assertRaises(s.RateLimited):
+                s.api("GET", "/me/player")
+            with self.assertRaises(s.RateLimited):
+                s.api("GET", "/me/player")
+            self.assertEqual(network.call_count, 2)
+        stats = s.cmd_cache_info([])["stats"]
+        self.assertEqual(stats["requests"], 2)
+        self.assertEqual(stats["cacheHits"], 1)
+        self.assertEqual(stats["rateLimited"], 1)
+        self.assertEqual(stats["cooldownSkips"], 1)
+        self.assertEqual(stats["endpoints"]["GET /albums/:id"], {"requests": 1, "cacheHits": 1})
+        self.assertEqual(sum(h["requests"] for h in stats["hours"]), 2)
+        self.assertEqual(stats["lastRateLimit"]["reason"], "QUOTA_EXCEEDED")
+        self.assertEqual(stats["lastRateLimit"]["retryAfter"], 600)
+        for private in ("not-for-logs", "/albums/A", "test-access", "test-refresh"):
+            self.assertNotIn(private, json.dumps(stats))
+
+    def test_hourly_metrics_are_bounded_and_keep_legacy_totals(self):
+        file = os.path.join(s.STATE_DIR, "request-stats.json")
+        s.write_private_json(file, {"since": 1, "requests": 711})
+        for hour in range(60):
+            with patch.object(s.time, "time", return_value=3600 * (hour + 1)):
+                s.request_stat("requests", "GET", "/me/player")
+        stats = s.cmd_cache_info([])["stats"]
+        self.assertEqual(stats["since"], 1)
+        self.assertEqual(stats["breakdownSince"], 3600)
+        self.assertEqual(stats["requests"], 771)
+        self.assertEqual(stats["endpoints"]["GET /me/player"]["requests"], 60)
+        self.assertEqual(len(stats["hours"]), 48)
+        self.assertEqual(sum(h["requests"] for h in stats["hours"]), 48)
+
+    def test_endpoint_diagnostics_strip_queries_and_entity_ids(self):
+        self.assertEqual(s.request_endpoint("GET", s.API_URL + "/playlists/private/items?fields=secret"),
+                         "GET /playlists/:id/items")
+        self.assertEqual(s.request_endpoint("GET", "/search?q=private"), "GET /search")
+        self.assertEqual(s.request_endpoint("GET", "/shows/private"), "GET /shows/:id")
 
     def test_partial_likes_expose_cooldown_without_false_values(self):
         s.note_rate_limit("/me/player", 60)
-        self.assertEqual(s.cmd_liked_contains(["spotify:track:A"]), {"liked": {}})
+        self.assertEqual(s.cmd_liked_contains(["spotify:track:A"])["liked"], {})
         self.assertTrue(s.RESPONSE_META["partial"])
         self.assertGreater(s.RESPONSE_META["retryAfter"], 0)
 
@@ -375,6 +422,186 @@ class CacheTests(unittest.TestCase):
             self.assertFalse(thread.is_alive())
         self.assertIn(s.read_json(path, None), values)
         self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+
+class PowerUsageTests(unittest.TestCase):
+    start = CacheTests.start
+    seed = CacheTests.seed
+    error = CacheTests.error
+
+    def setUp(self):
+        CacheTests.setUp(self)
+        self.start(patch.object(s, "REQUEST_INTERVAL", 0))
+        self.start(patch.object(s, "REQUEST_LIMIT", 100000))
+
+    def expire(self, path, params=None):
+        url = s.API_URL + path
+        if params:
+            url += "?" + s.urllib.parse.urlencode(sorted(params.items()))
+        slot, _ = s.api_cache_slot("GET", path, url)
+        os.utime(slot, (0, 0))
+
+    def test_overlapping_like_batches_only_fetch_unknown_items(self):
+        seen = []
+        def network(request, **_):
+            uris = s.urllib.parse.parse_qs(s.urllib.parse.urlsplit(request.full_url).query)["uris"][0].split(",")
+            seen.append(uris)
+            return Response([u.endswith("A") for u in uris])
+        with patch.object(s.urllib.request, "urlopen", side_effect=network):
+            first = s.cmd_liked_contains(["spotify:track:B", "spotify:track:A"])
+            s.RESPONSE_META.clear()  # A new helper process uses the same disk cache.
+            second = s.cmd_liked_contains(["spotify:track:C", "spotify:track:B", "spotify:track:A"])
+            self.assertEqual(first["liked"]["spotify:track:A"], True)
+            self.assertEqual(second["liked"]["spotify:track:B"], False)
+            self.assertEqual(seen, [["spotify:track:A", "spotify:track:B"], ["spotify:track:C"]])
+
+    def test_like_mutation_preserves_other_items_and_records_new_status(self):
+        with patch.object(s.urllib.request, "urlopen", side_effect=[Response([False, True]), Response({})]) as network:
+            s.cmd_liked_contains(["spotify:track:A", "spotify:track:B"])
+            s.cmd_like(["spotify:track:A", "on"])
+            result = s.cmd_liked_contains(["spotify:track:B", "spotify:track:A"])
+            self.assertEqual(result["liked"], {"spotify:track:A": True, "spotify:track:B": True})
+            self.assertEqual(network.call_count, 2)
+
+    def test_overlapping_like_batches_share_cache_across_processes(self):
+        ctx = multiprocessing.get_context("fork")
+        ready = ctx.Barrier(2)
+        count = ctx.Value("i", 0)
+        def network(request, **_):
+            uris = s.urllib.parse.parse_qs(s.urllib.parse.urlsplit(request.full_url).query)["uris"][0].split(",")
+            with count.get_lock():
+                count.value += len(uris)
+            time.sleep(0.02)
+            return Response([False] * len(uris))
+        def worker(uris):
+            ready.wait(timeout=5)
+            s.cmd_liked_contains(uris)
+        with patch.object(s.urllib.request, "urlopen", side_effect=network):
+            workers = [ctx.Process(target=worker, args=(uris,)) for uris in
+                       [["spotify:track:A", "spotify:track:B"], ["spotify:track:B", "spotify:track:C"]]]
+            for process in workers:
+                process.start()
+            for process in workers:
+                process.join(8)
+                if process.is_alive():
+                    process.terminate()
+                self.assertEqual(process.exitcode, 0)
+        self.assertEqual(count.value, 3)
+
+    def test_expired_item_cache_serves_overlapping_batch_during_cooldown(self):
+        for uri, liked in [("spotify:track:A", True), ("spotify:track:B", False)]:
+            s.write_private_json(s.liked_item_slot(s.api_session(), uri), {"liked": liked, "checkedAt": time.time() - 901})
+        s.note_rate_limit("/me/library/contains", 600)
+        result = s.cmd_liked_contains(["spotify:track:A", "spotify:track:B", "spotify:track:C"])
+        self.assertEqual(result["liked"], {"spotify:track:A": True, "spotify:track:B": False})
+        self.assertTrue(s.RESPONSE_META["stale"])
+        self.assertTrue(s.RESPONSE_META["partial"])
+        self.assertGreaterEqual(result["ages"]["spotify:track:A"], 901)
+
+    def test_item_cache_cannot_cross_logins_or_survive_cache_clear(self):
+        with patch.object(s.urllib.request, "urlopen", side_effect=[Response([True]), Response([False]), Response([True])]) as network:
+            s.cmd_liked_contains(["spotify:track:A"])
+            s.store_token({"access_token": "B", "refresh_token": "B"})
+            s.RESPONSE_META.clear()
+            self.assertFalse(s.cmd_liked_contains(["spotify:track:A"])["liked"]["spotify:track:A"])
+            s.cmd_cache_clear(["api"])
+            self.assertTrue(s.cmd_liked_contains(["spotify:track:A"])["liked"]["spotify:track:A"])
+            self.assertEqual(network.call_count, 3)
+
+    def test_fresh_like_lookup_bypasses_per_item_cache(self):
+        with patch.object(s.urllib.request, "urlopen", side_effect=[Response([False]), Response([True])]) as network:
+            s.cmd_liked_contains(["spotify:track:A"])
+            with patch.dict(os.environ, {"OMASOLOIST_FRESH": "1"}):
+                self.assertTrue(s.cmd_liked_contains(["spotify:track:A"])["liked"]["spotify:track:A"])
+            self.assertEqual(network.call_count, 2)
+
+    def test_like_mutation_during_batch_cannot_restore_old_status(self):
+        reads = 0
+        def network(request, **_):
+            nonlocal reads
+            if request.method == "PUT":
+                return Response({})
+            reads += 1
+            if reads == 1:
+                # Simulate a concurrently completed mutation without nesting
+                # another network request under the request serialization lock.
+                s.remember_like("spotify:track:A", True)
+                return Response([False])
+            return Response([True])
+        with patch.object(s.urllib.request, "urlopen", side_effect=network):
+            result = s.cmd_liked_contains(["spotify:track:A"])
+        self.assertTrue(result["liked"]["spotify:track:A"])
+        self.assertLessEqual(reads, 2)
+
+    def test_album_uses_embedded_tracks_and_continues_at_actual_offset(self):
+        track = {"uri": "spotify:track:A", "name": "A"}
+        album = {"uri": "spotify:album:A", "name": "Album",
+                 "tracks": {"offset": 0, "total": 3, "items": [track, None], "next": "next"}}
+        with patch.object(s.urllib.request, "urlopen", side_effect=[Response(album), Response({"total": 3, "items": [track]})]) as network:
+            first = s.cmd_album_tracks(["A"])
+            self.assertEqual(network.call_count, 1)
+            self.assertEqual(len(first["items"]), 1)
+            self.assertEqual(first["nextOffset"], 2)
+            second = s.cmd_album_tracks(["A", "2"])
+            self.assertFalse(second["next"])
+            self.assertEqual(network.call_count, 2)
+            self.assertIn("offset=2", network.call_args.args[0].full_url)
+
+    def test_removed_items_advance_pagination_and_empty_pages_stop(self):
+        with patch.object(s.urllib.request, "urlopen", return_value=Response({"items": [None, None], "total": 3})):
+            result = s.cmd_liked([])
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["nextOffset"], 2)
+        self.assertTrue(result["next"])
+        self.assertFalse(s.page([], 100, 2, 0)["next"])
+
+    def test_large_unchanged_playlist_reuses_pages_after_metadata_expires(self):
+        version = ["one"]
+        def network(request, **_):
+            path = s.urllib.parse.urlsplit(request.full_url).path
+            if path.endswith("/items"):
+                offset = int(s.urllib.parse.parse_qs(s.urllib.parse.urlsplit(request.full_url).query)["offset"][0])
+                return Response({"items": [{"item": {"uri": "spotify:track:" + str(i), "name": version[0]}}
+                                            for i in range(offset, offset + 50)], "total": 5000})
+            return Response({"uri": "spotify:playlist:P", "name": "Playlist", "snapshot_id": version[0]})
+        with patch.object(s.urllib.request, "urlopen", side_effect=network) as calls:
+            for offset in range(0, 5000, 50):
+                s.cmd_playlist_tracks(["P", str(offset)])
+            self.assertEqual(calls.call_count, 101)
+            for offset in range(0, 5000, 50):
+                s.cmd_playlist_tracks(["P", str(offset)])
+            self.assertEqual(calls.call_count, 101)  # Warm browsing sends nothing.
+            self.expire("/playlists/P", {"fields": s.PLAYLIST_FIELDS})
+            for offset in range(0, 5000, 50):
+                s.cmd_playlist_tracks(["P", str(offset)])
+            self.assertEqual(calls.call_count, 102)  # One version check, no page downloads.
+            version[0] = "two"
+            self.expire("/playlists/P", {"fields": s.PLAYLIST_FIELDS})
+            result = s.cmd_playlist_tracks(["P"])
+            self.assertEqual(calls.call_count, 104)
+            self.assertEqual(result["items"][0]["name"], "two")
+            self.assertEqual(result["snapshot"], "two")
+
+    def test_playlist_edit_keeps_other_playlists_versioned_pages(self):
+        with patch.object(s.urllib.request, "urlopen", side_effect=lambda *a, **k: Response({})) as network:
+            for ident in ("A", "B"):
+                s.api("GET", "/playlists/" + ident + "/items", snapshot="one")
+            s.cmd_add_to_playlist(["A", "spotify:track:T"])
+            s.api("GET", "/playlists/B/items", snapshot="one")
+            self.assertEqual(network.call_count, 3)
+            s.api("GET", "/playlists/A/items", snapshot="one")
+            self.assertEqual(network.call_count, 4)
+
+    def test_legacy_playlist_cache_still_works_during_existing_cooldown(self):
+        self.seed("/playlists/P", {"uri": "spotify:playlist:P", "name": "Old"}, age=301,
+                  params={"fields": s.LEGACY_PLAYLIST_FIELDS})
+        self.seed("/playlists/P/items", {"total": 1, "items": [{"item": {"uri": "spotify:track:T", "name": "Track"}}]},
+                  age=301, params={"limit": 50, "offset": 0})
+        s.note_rate_limit("/me/library/contains", 600)
+        result = s.cmd_playlist_tracks(["P"])
+        self.assertEqual(result["meta"]["name"], "Old")
+        self.assertEqual(result["items"][0]["name"], "Track")
+        self.assertTrue(s.RESPONSE_META["stale"])
 
 
 class HistoryTests(unittest.TestCase):

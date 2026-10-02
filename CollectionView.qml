@@ -13,6 +13,7 @@ Item {
     required property var api
     required property var controller
     property var collection: null
+    property bool active: visible
     property color foreground: Color.foreground
     property string glyph: ""
 
@@ -25,6 +26,7 @@ Item {
     CollectionModel {
         id: collectionModel
         api: root.api
+        active: root.active
         collection: root.collection
     }
     readonly property alias tracks: collectionModel.tracks

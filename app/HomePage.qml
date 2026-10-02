@@ -8,6 +8,7 @@ Flickable {
     id: root
 
     required property var app
+    readonly property bool active: visible && app.showsWindow
 
     property var home: null
     property bool loading: false
@@ -19,7 +20,7 @@ Flickable {
 
     function load(reset) {
         if (reset) { revision++; loading = false; home = null; error = ""; }
-        if (loading || !app.service.api.signedIn) return;
+        if (!active || loading || !app.service.api.signedIn) return;
         loading = true;
         var requestedRevision = revision;
         app.service.api.call(["home"], function(result) {
@@ -39,8 +40,8 @@ Flickable {
     }
 
     Component.onCompleted: load()
-    // Reopening Home after a while refetches; answers are cached, so this is cheap.
-    onVisibleChanged: if (visible && home && Date.now() - loadedAt > 5 * 60 * 1000) load()
+    // Load only when Home is shown, including the first time the window opens.
+    onActiveChanged: if (active && (!home || partial || Date.now() - loadedAt > 5 * 60 * 1000)) load()
     Connections {
         target: root.app.service.api
         function onSignedInChanged() { if (root.app.service.api.signedIn) root.load(); }

@@ -10,6 +10,7 @@ Item {
     id: root
 
     required property var app
+    readonly property bool active: visible && app.showsWindow
     property var collection: null
     // Track to scroll to and flash once it's loaded (from "Playing from…").
     property string highlightUri: ""
@@ -68,15 +69,33 @@ Item {
     CollectionModel {
         id: tracks
         api: root.app.service.api
+        active: root.active
         collection: root.collection
         wantAll: root.reordered
         onTracksChanged: {
             var uris = tracks.tracks.map(function(t) { return t.uri; });
             if (tracks.isLiked) root.app.service.likes.markLiked(uris);
-            else root.app.service.likes.query(uris);
+            else visibleLikes.restart();
             Qt.callLater(root.tryHighlight);
         }
     }
+
+    // Sorting can load thousands of tracks. Only check hearts near the
+    // viewport, in one batch after scrolling or page loading settles.
+    function queryVisibleLikes() {
+        if (!active || tracks.isLiked) return;
+        var uris = [];
+        var rowHeight = viewMode === "compact" ? 36 : 56;
+        for (var y = list.contentY; y < list.contentY + list.height + rowHeight; y += rowHeight) {
+            var index = list.indexAt(20, y);
+            if (index >= 0 && index < displayed.length) uris.push(displayed[index].uri);
+        }
+        app.service.likes.query(uris);
+    }
+    Timer { id: visibleLikes; interval: 150; onTriggered: root.queryVisibleLikes() }
+    onActiveChanged: if (active) visibleLikes.restart()
+    onDisplayedChanged: visibleLikes.restart()
+    onViewModeChanged: visibleLikes.restart()
 
     readonly property bool playingThis: collection !== null && player.context
         && player.context.uri === collection.uri
@@ -182,6 +201,9 @@ Item {
         boundsBehavior: Flickable.StopAtBounds
         model: root.displayed
         cacheBuffer: 800
+        onContentYChanged: visibleLikes.restart()
+        onHeightChanged: visibleLikes.restart()
+        onContentHeightChanged: visibleLikes.restart()
         onAtYEndChanged: if (atYEnd && contentHeight > height) tracks.load(false)
 
         Controls.ScrollBar.vertical: Controls.ScrollBar {}

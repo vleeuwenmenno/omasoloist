@@ -9,6 +9,7 @@ Item {
 
     required property var api
     property var collection: null
+    property bool active: true
 
     property var tracks: []
     // Name/art/owner from the helper, for collections opened by URI only.
@@ -19,6 +20,9 @@ Item {
     property string error: ""
     property string pendingUri: ""
     property int revision: 0
+    property bool initialized: false
+    property int nextOffset: 0
+    property string playlistSnapshot: ""
     // Keep loading pages until everything is in (sorting and filtering need
     // the whole list). Capped at 5000 songs.
     property bool wantAll: false
@@ -36,25 +40,35 @@ Item {
             revision++;
             loading = false;
             tracks = []; total = 0; loadedAll = false; error = ""; meta = null;
+            initialized = false; nextOffset = 0; playlistSnapshot = "";
         }
-        if (!collection || loading || (!reset && loadedAll) || !api.signedIn) return;
+        if (!active || !collection || loading || (!reset && loadedAll) || !api.signedIn) return;
         var requestedRevision = revision;
         loading = true;
         var requested = collection;
         var kind = collection.kind;
         var args = kind === "radio" ? ["radio"].concat(String(collection.id).split(":"))
-            : kind === "liked" ? ["liked", String(tracks.length)]
-            : kind === "album" ? ["album-tracks", collection.id, String(tracks.length)]
-            : ["playlist-tracks", collection.id, String(tracks.length)];
+            : kind === "liked" ? ["liked", String(nextOffset)]
+            : kind === "album" ? ["album-tracks", collection.id, String(nextOffset)]
+            : ["playlist-tracks", collection.id, String(nextOffset)];
         api.call(args, function(result) {
             if (requestedRevision !== root.revision || requested !== root.collection) return;
             root.loading = false;
             if (!result.ok) { root.error = result.error; return; }
+            if (root.playlistSnapshot !== "" && result.snapshot && result.snapshot !== root.playlistSnapshot) {
+                root.error = "This playlist changed while loading. Reopen it to load the updated order.";
+                root.loadedAll = true;
+                return;
+            }
+            if (result.snapshot) root.playlistSnapshot = result.snapshot;
             if (result.meta) root.meta = result.meta;
+            root.initialized = true;
+            var offset = result.nextOffset !== undefined ? result.nextOffset : root.nextOffset + result.items.length;
+            root.loadedAll = !result.next || offset <= root.nextOffset;
+            root.nextOffset = offset;
             root.tracks = root.tracks.concat(result.items);
             root.total = result.total;
-            root.loadedAll = !result.next;
-            if (root.wantAll && !root.loadedAll && root.tracks.length < 5000) Qt.callLater(function() {
+            if ((root.wantAll || result.items.length === 0) && !root.loadedAll && root.nextOffset < 5000) Qt.callLater(function() {
                 if (requestedRevision === root.revision) root.load(false);
             });
         });
@@ -74,6 +88,7 @@ Item {
     }
 
     onCollectionChanged: load(true)
+    onActiveChanged: if (active && (!initialized || wantAll || (!loadedAll && tracks.length === 0))) load(!initialized)
 
     Connections {
         target: root.api
